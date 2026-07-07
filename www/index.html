@@ -1,0 +1,2949 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mon Lecteur Multi-Fichiers Officiel</title>
+<!-- Libs locales pour mode hors ligne -->
+<script src="jszip.min.js"></script>
+<script src="docx-preview.min.js"></script>
+<script src="pdf.min.js"></script>
+<script src="xlsx.full.min.js"></script>
+<style>
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #121212;
+  color: #ffffff;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  -webkit-tap-highlight-color: transparent; /* Supprime le flash bleu au tap */
+}
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+/* Barre d'outils */
+.toolbar {
+  background-color: #1f1f1f;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid #00adb5;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  z-index: 10;
+}
+.title {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #00adb5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-right: 10px;
+}
+.btn {
+  background-color: #00adb5;
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 25px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9rem;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  transition: background 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.btn:active { background-color: #007a80; }
+/* AJOUT: Bouton icône (recherche) */
+.btn-icon {
+  padding: 10px 14px;
+  font-size: 1rem;
+}
+/* AJOUT: Menu overflow (⋮) */
+.menu-wrap { position: relative; flex-shrink: 0; }
+.overflow-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background-color: #1f1f1f;
+  border: 1px solid #00adb5;
+  border-radius: 12px;
+  overflow: hidden;
+  min-width: 190px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+  z-index: 20;
+}
+.overflow-menu.active { display: block; }
+.overflow-menu button,
+.overflow-menu label {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  color: #eee;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.overflow-menu button:active,
+.overflow-menu label:active { background-color: #007a80; }
+.overflow-menu button + button,
+.overflow-menu label + button,
+.overflow-menu button + label {
+  border-top: 1px solid #333;
+}
+/* AJOUT: FAB retour à l'accueil (visible uniquement en aperçu fichier) */
+.back-fab {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background-color: #00adb5;
+  color: white;
+  border: none;
+  padding: 9px 14px 9px 12px;
+  border-radius: 25px;
+  font-weight: bold;
+  font-size: 0.9rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  transition: transform 0.15s ease, background 0.2s;
+}
+.back-fab.active { display: inline-flex; }
+.back-fab:active {
+  background-color: #007a80;
+  transform: translateX(-3px);
+}
+.back-fab .back-arrow { font-size: 1.05rem; line-height: 1; }
+/* AJOUT: Barre de recherche */
+.search-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background-color: #1a1a1a;
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+}
+.search-bar.active { display: flex; }
+#search-input {
+  flex: 1;
+  min-width: 0;
+  background-color: #2d2d2d;
+  border: 1px solid #444;
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.search-count {
+  color: #aaa;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: center;
+}
+.search-nav-btn {
+  background-color: #2d2d2d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.search-nav-btn:active { background-color: #007a80; }
+mark.search-hl {
+  background-color: #ffe066;
+  color: #000;
+  border-radius: 2px;
+}
+mark.search-hl.current {
+  background-color: #ff9800;
+}
+/* AJOUT: Boutons flottants haut/bas */
+.scroll-fab-container {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.scroll-fab-container.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.scroll-fab {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: rgba(0,173,181,0.85);
+  color: white;
+  border: none;
+  font-size: 1.1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.scroll-fab:active { background-color: #007a80; }
+/* AJOUT: Ecran d'accueil unifié avec onglets (Tous/PDF/Word/Excel),
+   recherche et sélection multiple - remplace l'ancien panneau modal. */
+.home-tabs-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 10px 4px;
+  overflow-x: auto;
+}
+.home-tab-btn {
+  background-color: #2d2d2d;
+  color: #ccc;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: bold;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.home-tab-btn.active {
+  background-color: #00adb5;
+  color: #fff;
+}
+.home-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 4px;
+  flex-wrap: wrap;
+}
+.home-tools-row.select-mode .home-search-input {
+  display: none;
+}
+.home-tools-row.select-mode .home-sort-btn {
+  display: none;
+}
+.home-tools-row.select-mode {
+  justify-content: flex-end;
+}
+.home-toolbar{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    box-sizing:border-box;
+    overflow:hidden;
+}
+
+.home-search-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  background-color: #2d2d2d;
+  border: 1px solid #444;
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.home-icon-btn {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background-color: #2d2d2d;
+  border: 1px solid #444;
+  color: #ccc;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.home-icon-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.home-icon-btn.active {
+  background-color: #00adb5;
+  border-color: #00adb5;
+  color: #fff;
+}
+
+.home-file-list {
+  padding: 4px 8px 16px;
+}
+.library-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 8px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border-bottom: 1px solid #2a2a2a;
+  cursor: pointer;
+}
+
+.library-item:active { background-color: #262626; }
+.library-item-icon{
+    width:52px;
+    height:52px;
+
+    display:flex;
+    justify-content:center;
+    align-items:center;
+
+    flex-shrink:0;
+}
+.library-item-info{
+    flex:1;
+    min-width:0;
+
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+}
+.library-item-name{
+    flex:1;
+    min-width:0;
+    font-weight:600;
+    font-size:1rem;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+}
+.library-item-meta { font-size: 0.75rem; color: #999; margin-top: 2px; }
+.library-item-actions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-shrink:0;
+}
+
+.library-action-btn{
+    width:38px;
+    height:38px;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+
+    background:#202020;
+    border:none;
+    border-radius:50%;
+
+    cursor:pointer;
+
+    transition:.2s;
+}
+
+.library-action-btn svg{
+    width:20px;
+    height:20px;
+    fill:#cfd8dc;
+}
+
+.library-action-btn:hover{
+    background:#323232;
+}
+
+.library-action-btn:active{
+    transform:scale(.92);
+}
+
+.library-action-btn.share svg{
+    fill:#00adb5;
+}
+
+.library-action-btn.danger svg{
+    fill:#ff5252;
+}
+.library-action-btn.favorite svg{
+    fill:#888;
+}
+.library-action-btn.favorite.active svg{
+    fill:#ffc107;
+}
+.library-action-btn.rename svg{
+    fill:#bbb;
+}
+.library-item.is-favorite{
+    border-left: 3px solid #ffc107;
+}
+.library-empty { color: #aaa; text-align: center; padding: 40px 20px; font-style: italic; }
+/* AJOUT: Ecran d'accueil = liste des fichiers de la bibliotheque affichee
+   directement dans le viewer au demarrage (pas besoin d'ouvrir le panneau). */
+.home-screen{
+    width:100%;
+    max-width:700px;
+    margin:0 auto;
+    box-sizing:border-box;
+    overflow-x:hidden;
+}
+.home-screen-title {
+  color: #999;
+  font-size: 0.85rem;
+  padding: 12px 10px 4px;
+}
+/* AJOUT: Mode selection multiple dans le panneau "Mes fichiers" */
+.library-item-checkbox {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  accent-color: #00adb5;
+}
+
+.library-bulk-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 10px 14px;
+  background: #1e1e1e;
+  border-top: 1px solid #333;
+  z-index: 9999;
+}
+
+.library-bulk-bar.active {
+  display: flex;
+}
+
+/* optionnel mais recommandé pour alignement parfait */
+.library-bulk-bar .library-action-btn {
+  width: auto;
+  min-width: 130px;
+  height: 56px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 28px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.library-bulk-bar .library-action-btn svg {
+  width: 24px;
+  height: 24px;
+}
+.library-bulk-bar .library-action-btn.share {
+  color: #00adb5;
+}
+.library-bulk-bar .library-action-btn.danger {
+  color: #ff5252;
+}
+
+.library-bulk-bar .btn {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+.library-bulk-bar .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.library-select-toggle {
+  margin-right: 8px;
+}
+.home-select-counter {
+  color: #ccc;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.library-select-all-toggle {
+  background: none;
+  border: 1px solid #444;
+  color: #ccc;
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+.library-select-all-toggle.active {
+  background-color: #00adb5;
+  color: #fff;
+  border-color: #00adb5;
+}
+
+/* AJOUT: Style onglets Excel */
+.tabs-container {
+  display: flex;
+  background-color: #1a1a1a;
+  border-bottom: 1px solid #333;
+  overflow-x: auto;
+  padding: 6px 10px;
+  gap: 6px;
+}
+.sheet-button {
+  background-color: #2d2d2d;
+  color: #ccc;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.sheet-button.active {
+  background-color: #00adb5;
+  color: white;
+  font-weight: bold;
+}
+.sheet-button:active { background-color: #007a80; }
+/* Zone de visualisation principale */
+.viewer-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: #2d2d2d;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+canvas {
+  box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+  background-color: white;
+  max-width: 100%;
+  display: block;
+}
+/* Conteneur Word et Excel */
+.document-wrapper {
+  background-color: white;
+  color: #333;
+  padding: 30px 20px;
+  max-width: 800px;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+/* AJOUT: Images Word responsive */
+.document-wrapper img, .docx-wrapper img { 
+  max-width: 100% !important; 
+  height: auto !important; 
+}
+/* Style tableaux Excel et Word adaptés au mobile */
+.document-wrapper table {
+  border-collapse: collapse;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+  background-color: #ffffff;
+  
+  /* Sécurités pour le zoom et la largeur Word/Excel */
+  max-width: 100% !important;
+  width: 100% !important;
+  display: block;
+  overflow-x: auto;
+}
+.document-wrapper tr,.document-wrapper th,.document-wrapper td {
+  border: 1px solid #cccccc!important;
+  color: #222!important;
+  padding: 8px 12px!important;
+  text-align: left;
+}
+.document-wrapper th {
+  background-color: #f4f4f4!important;
+  font-weight: bold!important;
+}
+.document-wrapper tr:hover { background-color: #f9f9f9!important; }
+#file-input { display: none; }
+.info-text { color: #aaa; font-style: italic; text-align: center; margin-top: 40px; }
+.loading { color: #00adb5; text-align: center; margin-top: 60px; font-size: 1.1rem; }
+/* Permet au tableau de défiler horizontalement sans déformer l'application */
+.document-wrapper {
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 10px !important; /* Réduit les marges internes blanches */
+  overflow-x: auto !important; /* Permet de scroller le tableau s'il déborde */
+  -webkit-overflow-scrolling: touch;
+}
+/* Réinitialise la zone d'affichage principale pour accepter le scroll dans tous les sens */
+.viewer-container {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+/* Cible le conteneur global injecté par docx-preview */
+/* === RENDU DOCX STYLE "PAGE COMPLÈTE MISE À L'ÉCHELLE" (comme un lecteur PDF) === */
+/* Conteneur extérieur : gère le fond gris + masque le débordement causé par le zoom */
+.docx-scale-outer {
+  background: #e0e0e0;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+}
+/* Le vrai conteneur docx-preview : on NE force PLUS sa largeur à 100%.
+   Il garde sa taille réelle (page A4 en px), et c'est le transform: scale()
+   calculé en JS (fitDocxToScreen) qui le fait tenir à l'écran, texte et
+   tableaux inclus, exactement comme le fait l'autre lecteur. */
+.docx-wrapper {
+  background: #e0e0e0;
+}
+.docx-wrapper .docx {
+  margin: 0 auto 15px auto !important;
+  background: white !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+  box-sizing: border-box !important;
+}
+/* Le tableau garde sa mise en page naturelle du document (pas de largeur
+   minimale forcée) : c'est le scale global qui le réduit proportionnellement,
+   texte compris, au lieu de créer un scroll horizontal. */
+.docx-wrapper table {
+  border-collapse: collapse !important;
+  margin: 15px 0 !important;
+}
+.docx-wrapper tr, .docx-wrapper th, .docx-wrapper td {
+  border: 1px solid #cccccc !important;
+  color: #222 !important;
+  padding: 8px 12px !important;
+  text-align: left;
+}
+/* Empêche la coupure du texte au niveau des tirets (ex: SI1-SI2).
+   !important + ciblage des enfants (p, span) car docx-preview applique
+   souvent son propre style de retour à la ligne directement dessus. */
+.docx-wrapper td, .docx-wrapper th,
+.docx-wrapper td *, .docx-wrapper th * {
+  white-space: nowrap !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+.docx-wrapper th {
+  background-color: #f4f4f4 !important;
+  font-weight: bold !important;
+}
+/* Retire les bordures du 1er tableau du document (bloc logo + titre),
+   sans toucher aux tableaux suivants (ex: le tableau des horaires) */
+.docx-wrapper .docx table:first-of-type,
+.docx-wrapper .docx table:first-of-type tr,
+.docx-wrapper .docx table:first-of-type th,
+.docx-wrapper .docx table:first-of-type td {
+  border: none !important;
+}
+/* Neutralise le float:left intégré dans le style du tableau des horaires
+   (confirmé par le diagnostic : class "docx_grilledutableau" avec float:left).
+   C'est ce float qui faisait remonter "Le Responsable" à côté du tableau
+   au lieu de passer dessous, comportement CSS classique d'un float. */
+.docx-wrapper .docx table[style*="float"] {
+  float: none !important;
+  clear: both !important;
+}
+
+/* ===== Notifications stylées (remplace alert()) ===== */
+#toastContainer {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: calc(100% - 32px);
+  max-width: 420px;
+  pointer-events: none;
+}
+.toast {
+  background-color: #262626;
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  font-size: 14px;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-left: 4px solid #3a86ff;
+  opacity: 0;
+  transform: translateY(-10px);
+  animation: toastIn 0.25s ease forwards, toastOut 0.3s ease forwards var(--toast-life, 3.2s);
+  pointer-events: auto;
+}
+.toast.toast-success { border-left-color: #2ecc71; }
+.toast.toast-error { border-left-color: #e74c3c; }
+.toast.toast-info { border-left-color: #3a86ff; }
+.toast .toast-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.toast .toast-msg {
+  flex: 1;
+  word-break: break-word;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toastOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-10px); }
+}
+
+/* ===== Modale de confirmation stylée (remplace confirm()) ===== */
+#confirmOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+#confirmOverlay.active {
+  display: flex;
+}
+.confirm-box {
+  background-color: #1f1f1f;
+  color: #fff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 340px;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  animation: confirmPop 0.2s ease;
+}
+@keyframes confirmPop {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+.confirm-box .confirm-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.confirm-box .confirm-msg {
+  font-size: 14px;
+  color: #ccc;
+  margin-bottom: 20px;
+  line-height: 1.4;
+}
+.confirm-box .confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.confirm-box button {
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+}
+.confirm-box .confirm-cancel {
+  background-color: #3a3a3a;
+  color: #fff;
+}
+.confirm-box .confirm-ok {
+  background-color: #e74c3c;
+  color: #fff;
+  font-weight: 600;
+}
+#promptOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+#promptOverlay.active { display: flex; }
+#promptOverlay .confirm-ok { background-color: #00adb5; }
+.prompt-input {
+  width: 100%;
+  box-sizing: border-box;
+  background-color: #2d2d2d;
+  border: 1px solid #444;
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+/* ===== Panneau "Trier par" (bottom-sheet clair) ===== */
+#sortSheetOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 10001;
+}
+#sortSheetOverlay.active { display: flex; }
+.sort-sheet {
+  background-color: #fff;
+  color: #111;
+  width: 100%;
+  max-width: 480px;
+  border-radius: 20px 20px 0 0;
+  padding: 18px 20px calc(18px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  animation: sortSheetUp 0.22s ease;
+}
+@keyframes sortSheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.sort-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sort-sheet-header h3 {
+  font-size: 1.25rem;
+  margin: 0;
+  font-weight: 700;
+}
+.sort-sheet-close {
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  color: #999;
+  cursor: pointer;
+  line-height: 1;
+  padding: 6px;
+}
+.sort-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 0;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.sort-option-row input[type="radio"] {
+  width: 22px;
+  height: 22px;
+  accent-color: #1976f0;
+  flex-shrink: 0;
+}
+.sort-divider {
+  height: 1px;
+  background-color: #ececec;
+  margin: 4px 0;
+}
+.sort-ok-btn {
+  width: 100%;
+  background-color: #1976f0;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-top: 14px;
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div id="toastContainer"></div>
+<div id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title"><span id="confirmIcon">⚠️</span><span id="confirmTitle">Confirmer</span></div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-actions">
+      <button class="confirm-cancel" id="confirmCancelBtn">Annuler</button>
+      <button class="confirm-ok" id="confirmOkBtn">Supprimer</button>
+    </div>
+  </div>
+</div>
+<div id="promptOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title"><span id="promptTitle">Renommer</span></div>
+    <input type="text" id="promptInput" class="prompt-input">
+    <div class="confirm-actions">
+      <button class="confirm-cancel" id="promptCancelBtn">Annuler</button>
+      <button class="confirm-ok" id="promptOkBtn">Valider</button>
+    </div>
+  </div>
+</div>
+<div id="sortSheetOverlay">
+  <div class="sort-sheet">
+    <div class="sort-sheet-header">
+      <h3>Trier par</h3>
+      <button class="sort-sheet-close" id="sortSheetCloseBtn">✕</button>
+    </div>
+    <label class="sort-option-row"><span>Date de modification</span><input type="radio" name="sortField" value="lastOpened"></label>
+    <label class="sort-option-row"><span>Date de création</span><input type="radio" name="sortField" value="date"></label>
+    <label class="sort-option-row"><span>Nom</span><input type="radio" name="sortField" value="name"></label>
+    <label class="sort-option-row"><span>Taille</span><input type="radio" name="sortField" value="size"></label>
+    <div class="sort-divider"></div>
+    <label class="sort-option-row"><span id="sortDirDescLabel">De neuf à vieux</span><input type="radio" name="sortDir" value="desc"></label>
+    <label class="sort-option-row"><span id="sortDirAscLabel">De vieux à neuf</span><input type="radio" name="sortDir" value="asc"></label>
+    <button class="sort-ok-btn" id="sortSheetOkBtn">OK</button>
+  </div>
+</div>
+<div class="toolbar">
+  <button class="back-fab" id="back-home-btn" title="Retour à l'accueil">
+    <span class="back-arrow">←</span><span>Accueil</span>
+  </button>
+  <div class="title" id="doc-title">Lecteur Multi-Formats</div>
+  <button class="btn btn-icon" id="search-toggle" title="Rechercher dans le document">🔍</button>
+  <div class="menu-wrap">
+    <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
+    <div class="overflow-menu" id="overflow-menu">
+      <label for="file-input">Ouvrir un fichier</label>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
+</div>
+<div class="search-bar" id="search-bar">
+  <input type="text" id="search-input" placeholder="Rechercher dans le document...">
+  <span class="search-count" id="search-count"></span>
+  <button class="search-nav-btn" id="search-prev" title="Résultat précédent">▲</button>
+  <button class="search-nav-btn" id="search-next" title="Résultat suivant">▼</button>
+  <button class="search-nav-btn" id="search-close" title="Fermer">✕</button>
+</div>
+<div class="tabs-container" id="excel-tabs"></div>
+<div class="viewer-container" id="viewer">
+  <p class="info-text" id="placeholder">Aucun fichier ouvert. Importez un document PDF, Word ou Excel pour commencer.</p>
+</div>
+<div class="scroll-fab-container">
+  <button class="scroll-fab" id="scroll-top-btn" title="Aller en haut">▲</button>
+  <button class="scroll-fab" id="scroll-bottom-btn" title="Aller en bas">▼</button>
+</div>
+
+<script>
+// ===== Notifications stylées (remplace alert()) =====
+function showToast(message, type = 'info', duration = 3200) {
+  const container = document.getElementById('toastContainer');
+  if (!container) { console.log(message); return; }
+  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + type;
+  toast.style.setProperty('--toast-life', (duration / 1000) + 's');
+  toast.innerHTML = '<span class="toast-icon">' + (icons[type] || icons.info) + '</span><span class="toast-msg"></span>';
+  toast.querySelector('.toast-msg').textContent = message;
+  container.appendChild(toast);
+  const totalLife = duration + 300; // laisse le temps à l'animation de sortie
+  setTimeout(() => { toast.remove(); }, totalLife);
+}
+
+// ===== Confirmation stylée (remplace confirm()) =====
+function showConfirm(message, options = {}) {
+  const {
+    title = 'Confirmer',
+    icon = '⚠️',
+    okLabel = 'Supprimer',
+    cancelLabel = 'Annuler'
+  } = options;
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('confirmOverlay');
+    const msgEl = document.getElementById('confirmMsg');
+    const titleEl = document.getElementById('confirmTitle');
+    const iconEl = document.getElementById('confirmIcon');
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+
+    msgEl.textContent = message;
+    titleEl.textContent = title;
+    iconEl.textContent = icon;
+    iconEl.style.display = icon ? '' : 'none';
+    okBtn.textContent = okLabel;
+    cancelBtn.textContent = cancelLabel;
+
+    overlay.classList.add('active');
+
+    function cleanup(result) {
+      overlay.classList.remove('active');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onOverlayClick);
+      resolve(result);
+    }
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    function onOverlayClick(e) { if (e.target === overlay) cleanup(false); }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onOverlayClick);
+  });
+}
+
+// ===== Panneau "Trier par" (bottom-sheet) =====
+const SORT_DIR_LABELS = {
+  lastOpened: { desc: 'De neuf à vieux', asc: 'De vieux à neuf' },
+  date: { desc: 'De neuf à vieux', asc: 'De vieux à neuf' },
+  name: { desc: 'A → Z', asc: 'Z → A' },
+  size: { desc: 'Plus grand au plus petit', asc: 'Plus petit au plus grand' }
+};
+function showSortSheet(currentField, currentDir) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('sortSheetOverlay');
+    const closeBtn = document.getElementById('sortSheetCloseBtn');
+    const okBtn = document.getElementById('sortSheetOkBtn');
+    const fieldRadios = overlay.querySelectorAll('input[name="sortField"]');
+    const dirRadios = overlay.querySelectorAll('input[name="sortDir"]');
+    const descLabel = document.getElementById('sortDirDescLabel');
+    const ascLabel = document.getElementById('sortDirAscLabel');
+
+    function updateDirLabels() {
+      const checkedField = overlay.querySelector('input[name="sortField"]:checked');
+      const key = checkedField ? checkedField.value : currentField;
+      const labels = SORT_DIR_LABELS[key] || SORT_DIR_LABELS.date;
+      descLabel.textContent = labels.desc;
+      ascLabel.textContent = labels.asc;
+    }
+
+    fieldRadios.forEach(r => { r.checked = (r.value === currentField); });
+    dirRadios.forEach(r => { r.checked = (r.value === currentDir); });
+    updateDirLabels();
+    fieldRadios.forEach(r => r.addEventListener('change', updateDirLabels));
+
+    overlay.classList.add('active');
+
+    function cleanup(result) {
+      overlay.classList.remove('active');
+      okBtn.removeEventListener('click', onOk);
+      closeBtn.removeEventListener('click', onClose);
+      overlay.removeEventListener('click', onOverlayClick);
+      fieldRadios.forEach(r => r.removeEventListener('change', updateDirLabels));
+      resolve(result);
+    }
+    function onOk() {
+      const field = overlay.querySelector('input[name="sortField"]:checked');
+      const dir = overlay.querySelector('input[name="sortDir"]:checked');
+      cleanup({
+        field: field ? field.value : currentField,
+        dir: dir ? dir.value : currentDir
+      });
+    }
+    function onClose() { cleanup(null); }
+    function onOverlayClick(e) { if (e.target === overlay) cleanup(null); }
+
+    okBtn.addEventListener('click', onOk);
+    closeBtn.addEventListener('click', onClose);
+    overlay.addEventListener('click', onOverlayClick);
+  });
+}
+
+// ===== Saisie texte stylée (remplace prompt()) =====
+function showPrompt(message, defaultValue = '', options = {}) {
+  const { title = 'Renommer', okLabel = 'Valider', cancelLabel = 'Annuler' } = options;
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('promptOverlay');
+    const titleEl = document.getElementById('promptTitle');
+    const input = document.getElementById('promptInput');
+    const okBtn = document.getElementById('promptOkBtn');
+    const cancelBtn = document.getElementById('promptCancelBtn');
+
+    titleEl.textContent = title;
+    okBtn.textContent = okLabel;
+    cancelBtn.textContent = cancelLabel;
+    input.value = defaultValue;
+
+    overlay.classList.add('active');
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+
+    function cleanup(result) {
+      overlay.classList.remove('active');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onOverlayClick);
+      input.removeEventListener('keydown', onKeydown);
+      resolve(result);
+    }
+    function onOk() { cleanup(input.value.trim() || null); }
+    function onCancel() { cleanup(null); }
+    function onOverlayClick(e) { if (e.target === overlay) cleanup(null); }
+    function onKeydown(e) {
+      if (e.key === 'Enter') onOk();
+      else if (e.key === 'Escape') onCancel();
+    }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onOverlayClick);
+    input.addEventListener('keydown', onKeydown);
+  });
+}
+
+// Worker local pour PDF
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+const fileInput = document.getElementById('file-input');
+const viewer = document.getElementById('viewer');
+const docTitle = document.getElementById('doc-title');
+const excelTabs = document.getElementById('excel-tabs');
+let currentPdfDoc = null;
+let currentPdfObjectUrl = null; // AJOUT: URL blob du PDF en cours, à révoquer au changement de fichier
+let renderTimeout = null;
+let lastScale = 1;
+let pageViewports = {};
+let currentFileExtension = '';
+let lastWidth = window.innerWidth; // Stocke la largeur initiale de l'écran
+let isDocumentOpen = false;
+let isZooming = false;
+let zoomHideTimeout = null;
+// AJOUT: Extrait de l'ancien listener pour être réutilisable depuis la
+const FULL_SCAN_INTERVAL = 30 * 24 * 60 * 60 * 1000; // 30 jours
+
+function getLastFullScan() {
+    return Number(localStorage.getItem("lastFullScan") || 0);
+}
+
+function setLastFullScan() {
+    localStorage.setItem("lastFullScan", Date.now().toString());
+}
+
+async function getLibraryIndex() {
+    const files = await getAllLibraryFiles();
+
+    const index = new Map();
+
+    for (const file of files) {
+        if (file.path) {
+            index.set(file.path, {
+                id: file.id,
+                lastModified: file.lastModified || 0
+            });
+        }
+    }
+
+    return index;
+}
+
+function resetViewerState() {
+  excelTabs.innerHTML = '';
+  closeSearch(); // Ferme et réinitialise la recherche à chaque nouveau fichier
+    // Si un PDF était déjà ouvert, on le détruit proprement pour libérer la RAM
+  if (currentPdfDoc) {
+    currentPdfDoc.destroy();
+  }
+  pdfRenderObserver.disconnect();
+  pdfUnloadObserver.disconnect();
+  // CORRECTION: on vide la file d'attente et le compteur de rendus actifs,
+  // sinon des entrées pointant vers les canvas de l'ancien PDF pouvaient
+  // rester en mémoire et fausser processPDFRenderQueue() sur le nouveau fichier.
+  pdfRenderQueue = [];
+  pdfActiveRenders = 0;
+  pdfIsScrolling = false;
+  clearTimeout(pdfScrollIdleTimeout);
+  if (currentPdfObjectUrl) {
+    URL.revokeObjectURL(currentPdfObjectUrl);
+    currentPdfObjectUrl = null;
+  }
+  currentPdfDoc = null;
+  pageViewports = {};
+  currentDocxRefs = null;
+}
+
+function loadFileIntoViewer(file) {
+  if (!file) return;
+  // Reset complet + anti memory leak - CORRECTION 1
+  viewer.innerHTML = '<p class="loading">Chargement...</p>';
+  resetViewerState();
+  currentFileExtension = file.name.split('.').pop().toLowerCase();
+  docTitle.textContent = file.name;
+  isDocumentOpen = true;
+  updateBackFabVisibility();
+  // AJOUT: Pour un PDF, on évite de lire tout le fichier en mémoire d'abord
+  // (FileReader + Uint8Array) car ça retarde l'ouverture sur les gros fichiers.
+  // On donne directement une URL blob à pdf.js, qui peut alors lire le fichier
+  // par petits morceaux (streaming/range) et afficher la 1ère page bien plus vite.
+  if (currentFileExtension === 'pdf') {
+    openPdfFile(file);
+    return;
+  }
+  const fileReader = new FileReader();
+  fileReader.onload = function() {
+    viewer.innerHTML = '';
+        // 2. WORD (Nouveau moteur docx-preview)
+    if (currentFileExtension === 'docx') {
+      // Conteneur extérieur : c'est lui qui a la largeur de l'écran
+      // et qui masque le débordement de la page une fois réduite (scale)
+      const outer = document.createElement('div');
+      outer.className = 'docx-scale-outer';
+      viewer.appendChild(outer);
+      // Configuration options pour docx-preview
+      const options = {
+        inWrapper: true,      // INDISPENSABLE : laisse docx-preview créer sa propre structure
+                               // (.docx-wrapper > .docx) avec la vraie taille de page A4
+        ignoreWidth: false,
+        ignoreHeight: false,
+        experimental: true,   // Conserve les couleurs et formes d'origine
+        useBase64URL: true    // Corrige les images cassées (les URLs blob: posent
+                               // souvent problème quand l'app tourne en contexte fichier local)
+      };
+      // Rendu du document direct dans le conteneur extérieur
+      docx.renderAsync(this.result, outer, null, options)
+      .then(() => {
+          const wrapper = outer.querySelector('.docx-wrapper');
+          if (wrapper) {
+            fixBrokenImageMimeTypes(wrapper);
+            fitDocxToScreen(outer, wrapper);
+          } else {
+            outer.innerHTML = '<p class="info-text">Impossible d\'afficher ce document Word.</p>';
+          }
+      })
+      .catch(err => {
+          viewer.innerHTML = `<p class="info-text">Erreur Word : ${err.message}</p>`;
+      });
+    requestAnimationFrame(() => {
+    showScrollFabs();
+});
+}
+   // 3. EXCEL        
+    else if (currentFileExtension === 'xlsx') {
+      const data = new Uint8Array(this.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      workbook.SheetNames.forEach((sheetName, index) => {
+        const tabButton = document.createElement('button');
+        tabButton.className = 'sheet-button' + (index === 0 ? ' active' : '');
+        tabButton.textContent = sheetName;
+        excelTabs.appendChild(tabButton);
+        const worksheet = workbook.Sheets[sheetName];
+        const htmlTable = XLSX.utils.sheet_to_html(worksheet);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'document-wrapper';
+        wrapper.innerHTML = htmlTable;
+        wrapper.style.display = index === 0 ? 'block' : 'none';
+        viewer.appendChild(wrapper);
+        tabButton.addEventListener('click', () => {
+          document.querySelectorAll('.sheet-button').forEach(btn => btn.classList.remove('active'));
+          tabButton.classList.add('active');
+          
+          document.querySelectorAll('.viewer-container .document-wrapper').forEach((wrap, wIdx) => {
+            wrap.style.display = wIdx === index ? 'block' : 'none';
+          });
+        });
+      });
+    }
+  }; // <--- C'EST CETTE FERMETURE QUI MANQUAIT (pour le fileReader.onload)
+  fileReader.readAsArrayBuffer(file);
+}
+// AJOUT: sélectionner un ou plusieurs fichiers les sauvegarde tous dans la
+// bibliothèque locale (IndexedDB) pour qu'ils restent disponibles d'une
+// session à l'autre, puis ouvre directement le premier dans le lecteur.
+fileInput.addEventListener('change', (e) => {
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+  Promise.all(files.map(f => saveFileToLibrary(f)));
+  loadFileIntoViewer(files[0]);
+  fileInput.value = ''; // permet de resélectionner le(s) même(s) fichier(s) plus tard
+});
+// AJOUT: Ouverture PDF en streaming. On passe une URL blob à pdf.js au lieu
+// d'attendre la lecture complète du fichier (FileReader) : pdf.js peut alors
+// commencer à parser l'en-tête/la table des pages et afficher la 1ère page
+// bien avant que tout le fichier soit chargé, ce qui accélère nettement
+// l'ouverture des PDF volumineux.
+function openPdfFile(file) {
+  viewer.innerHTML = '';
+  const fileURL = URL.createObjectURL(file);
+  currentPdfObjectUrl = fileURL;
+  pdfjsLib.getDocument({ url: fileURL, disableStream: false, disableAutoFetch: false }).promise.then((pdf) => {
+    currentPdfDoc = pdf;
+    lastScale = window.visualViewport?.scale || 1;
+    // Rendu paresseux : on crée seulement des canvas "placeholder" vides
+    // (une hauteur approximative pour garder le scroll cohérent), et on
+    // ne rend réellement une page que lorsqu'elle approche de l'écran.
+    // Cela évite de charger des dizaines/centaines de pages HD en RAM
+    // d'un coup, ce qui faisait planter l'app sur les PDF volumineux.
+    pdf.getPage(1).then((firstPage) => {
+      const approxViewport = firstPage.getViewport({ scale: 1 });
+      const approxRatio = approxViewport.height / approxViewport.width;
+      const approxWidth = window.innerWidth - 30;
+      const approxHeight = Math.floor(approxWidth * approxRatio);
+      // AJOUT: on construit tous les placeholders dans un DocumentFragment
+      // (hors du DOM live) puis on l'insère en une seule fois, au lieu de
+      // faire un appendChild par page. Sur les PDF à centaines de pages, ça
+      // évite un reflow/repaint répété qui ralentissait l'ouverture.
+      const fragment = document.createDocumentFragment();
+      const canvases = [];
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const canvas = document.createElement('canvas');
+        canvas.setAttribute('data-page-num', pageNum);
+        canvas.setAttribute('data-rendered', '0');
+        canvas.style.width = approxWidth + 'px';
+        canvas.style.height = approxHeight + 'px';
+        canvas.style.display = 'block';
+        fragment.appendChild(canvas);
+        canvases.push(canvas);
+      }
+      viewer.appendChild(fragment);
+      canvases.forEach(canvas => {
+        pdfRenderObserver.observe(canvas);
+        pdfUnloadObserver.observe(canvas);
+      });
+    });
+  }).catch(err => {
+    viewer.innerHTML = `<p class="info-text">Erreur PDF : ${err.message}</p>`;
+  });
+}
+// AJOUT: Réduit (scale) la page Word entière pour qu'elle tienne dans l'écran,
+// texte et tableaux compris, au lieu de laisser le contenu déborder.
+let currentDocxRefs = null; // { outer, wrapper } pour pouvoir réajuster sur rotation/resize
+function fitDocxToScreen(outer, wrapper) {
+  currentDocxRefs = { outer, wrapper };
+  // On laisse le temps au navigateur de faire la mise en page avant de mesurer
+  requestAnimationFrame(() => {
+    // Largeur naturelle du document rendu (toutes les pages ont la même largeur)
+    const naturalWidth = wrapper.scrollWidth;
+    if (!naturalWidth) return;
+    const availableWidth = viewer.clientWidth - 10; // petite marge
+    const scale = Math.min(1, availableWidth / naturalWidth);
+    // "zoom" redimensionne réellement l'élément dans le flux de la page
+    // (contrairement à transform:scale), donc le conteneur autour prend
+    // naturellement la bonne taille, sans calcul manuel de hauteur.
+    wrapper.style.zoom = scale;
+  });
+}
+window.addEventListener('resize', () => {
+  if (currentDocxRefs) {
+    fitDocxToScreen(currentDocxRefs.outer, currentDocxRefs.wrapper);
+  }
+});
+window.visualViewport?.addEventListener("resize", () => {
+
+    isZooming = true;
+
+    scrollFabContainer.classList.remove("visible");
+
+    clearTimeout(zoomHideTimeout);
+
+    zoomHideTimeout = setTimeout(() => {
+        isZooming = false;
+    }, 250);
+
+});
+// AJOUT: Panneau de diagnostic replié, affiche le vrai HTML généré par
+
+function fixBrokenImageMimeTypes(wrapper) {
+  const imgs = wrapper.querySelectorAll('img[src^="data:application/octet-stream;base64,"]');
+  imgs.forEach(img => {
+    const src = img.getAttribute('src');
+    const base64Data = src.substring(src.indexOf('base64,') + 7);
+    let mime = 'image/png'; // valeur par défaut si signature inconnue
+    if (base64Data.startsWith('/9j/')) mime = 'image/jpeg';
+    else if (base64Data.startsWith('iVBORw0KGgo')) mime = 'image/png';
+    else if (base64Data.startsWith('R0lGOD')) mime = 'image/gif';
+    else if (base64Data.startsWith('Qk')) mime = 'image/bmp';
+    else if (base64Data.startsWith('UklGR')) mime = 'image/webp';
+    img.setAttribute('src', 'data:' + mime + ';base64,' + base64Data);
+  });
+}
+// AJOUT: Observer qui déclenche le rendu d'une page PDF quand elle approche
+
+const pdfRenderObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    const canvas = entry.target;
+    const pageNum = parseInt(canvas.getAttribute('data-page-num'), 10);
+    if (entry.isIntersecting) {
+      if (canvas.getAttribute('data-rendered') === '0') {
+        // AJOUT: aperçu basse résolution immédiat (assez léger pour ne pas
+        // saccader même en plein scroll), pendant que le rendu complet,
+        // lui, attend l'arrêt du scroll.
+        renderPDFPageQuick(currentPdfDoc, pageNum, canvas);
+        enqueuePDFRender(pageNum, canvas);
+      }
+    } else if (canvas.__pdfQueued) {
+      // Page sortie de la zone de rendu avant d'avoir été traitée : on la
+      // retire simplement de la file d'attente (pas encore rendue, rien à libérer).
+      dequeuePDFRender(canvas);
+    }
+  });
+}, { root: null, rootMargin: '400px 0px 400px 0px', threshold: 0 });
+
+const pdfUnloadObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    const canvas = entry.target;
+    if (!entry.isIntersecting && canvas.getAttribute('data-rendered') === '1') {
+      // Page loin de l'écran : on annule un éventuel rendu en cours puis on
+      // vide le canvas pour rendre la mémoire au système, tout en gardant sa
+      // taille CSS pour ne pas casser le scroll.
+      if (canvas.__pdfRenderTask) {
+        canvas.__pdfRenderTask.cancel();
+        canvas.__pdfRenderTask = null;
+      }
+      // AJOUT: on annule aussi un éventuel aperçu rapide en cours et on
+      // réinitialise son indicateur, sinon la page resterait figée sans
+      // aucun aperçu la prochaine fois qu'elle réapparaît à l'écran.
+      if (canvas.__pdfQuickRenderTask) {
+        canvas.__pdfQuickRenderTask.cancel();
+        canvas.__pdfQuickRenderTask = null;
+      }
+      canvas.__pdfQuickRendered = false;
+      canvas.setAttribute('data-rendered', '0');
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  });
+}, { root: null, rootMargin: '2500px 0px 2500px 0px', threshold: 0 });
+// AJOUT: File d'attente de rendu PDF. Sans elle, un scroll rapide ou saut
+
+let pdfActiveRenders = 0;
+const PDF_MAX_CONCURRENT_RENDERS = 2;
+let pdfRenderQueue = []; // [{ pageNum, canvas }]
+
+function enqueuePDFRender(pageNum, canvas) {
+  if (canvas.__pdfQueued || canvas.getAttribute('data-rendered') === '1') return;
+  canvas.__pdfQueued = true;
+  pdfRenderQueue.push({ pageNum, canvas });
+  processPDFRenderQueue();
+}
+
+function dequeuePDFRender(canvas) {
+  canvas.__pdfQueued = false;
+  const idx = pdfRenderQueue.findIndex(item => item.canvas === canvas);
+  if (idx !== -1) pdfRenderQueue.splice(idx, 1);
+}
+
+// CORRECTION: Tri par distance réelle au centre de l'écran plutôt qu'un simple
+
+function sortPDFRenderQueueByVisibility() {
+  const viewportCenter = window.innerHeight / 2;
+  pdfRenderQueue.forEach(item => {
+    const rect = item.canvas.getBoundingClientRect();
+    item._distance = Math.abs((rect.top + rect.bottom) / 2 - viewportCenter);
+  });
+  pdfRenderQueue.sort((a, b) => a._distance - b._distance);
+}
+
+// CORRECTION: Pause de rendu pendant un scroll actif. Rendre une page PDF
+
+let pdfIsScrolling = false;
+let pdfScrollIdleTimeout = null;
+const PDF_SCROLL_IDLE_DELAY = 150;
+
+function processPDFRenderQueue() {
+  if (pdfIsScrolling) return;
+  if (pdfActiveRenders >= PDF_MAX_CONCURRENT_RENDERS || pdfRenderQueue.length === 0) return;
+  sortPDFRenderQueueByVisibility();
+  while (pdfActiveRenders < PDF_MAX_CONCURRENT_RENDERS && pdfRenderQueue.length > 0) {
+    const { pageNum, canvas } = pdfRenderQueue.shift();
+    canvas.__pdfQueued = false;
+    if (canvas.getAttribute('data-rendered') === '1') continue; // déjà traitée entretemps
+    canvas.setAttribute('data-rendered', '1');
+    pdfActiveRenders++;
+    // CORRECTION: useBuffer=true (au lieu de false) : la page est dessinée sur
+    // un canvas caché puis copiée d'un coup sur le canvas visible. Sur les gros
+    // PDF, un rendu direct (false) laissait voir le dessin se construire
+    // progressivement à l'écran, ce qui donnait l'effet de saccade visuelle.
+    renderPDFPage(currentPdfDoc, pageNum, canvas, true, () => {
+      pdfActiveRenders--;
+      processPDFRenderQueue();
+    });
+  }
+}
+// CORRECTION: Pendant un scroll continu, on ré-ordonne la file selon la
+
+let pdfScrollRafPending = false;
+viewer.addEventListener('scroll', () => {
+  pdfIsScrolling = true;
+  clearTimeout(pdfScrollIdleTimeout);
+  pdfScrollIdleTimeout = setTimeout(() => {
+    pdfIsScrolling = false;
+    processPDFRenderQueue(); // flush : lance les rendus mis en pause pendant le scroll
+  }, PDF_SCROLL_IDLE_DELAY);
+
+  if (pdfScrollRafPending || pdfRenderQueue.length === 0) return;
+  pdfScrollRafPending = true;
+  requestAnimationFrame(() => {
+    pdfScrollRafPending = false;
+    processPDFRenderQueue();
+  });
+}, { passive: true });
+// AJOUT: Aperçu basse résolution instantané. Contrairement au rendu complet
+
+const PDF_QUICK_PREVIEW_WIDTH = 120; // px de large seulement : rendu quasi instantané
+
+function renderPDFPageQuick(pdf, pageNum, canvas) {
+  if (canvas.__pdfQuickRendered || canvas.getAttribute('data-rendered') === '1') return;
+  canvas.__pdfQuickRendered = true;
+  pdf.getPage(pageNum).then((page) => {
+    // Si la page a été rendue en pleine qualité (ou déchargée) entretemps, on abandonne l'aperçu.
+    if (canvas.getAttribute('data-rendered') === '1') return;
+    if (!pageViewports[pageNum]) {
+      pageViewports[pageNum] = page.getViewport({ scale: 1 });
+    }
+    const unscaledViewport = pageViewports[pageNum];
+    // CORRECTION: la hauteur du placeholder (fixée à l'ouverture du PDF) est
+    
+    const displayWidth = window.innerWidth - 30;
+    const correctHeight = Math.floor(displayWidth * (unscaledViewport.height / unscaledViewport.width));
+    canvas.style.height = correctHeight + 'px';
+    const scale = PDF_QUICK_PREVIEW_WIDTH / unscaledViewport.width;
+    const viewport = page.getViewport({ scale });
+    const ctx = canvas.getContext('2d');
+    if (canvas.__pdfQuickRenderTask) canvas.__pdfQuickRenderTask.cancel();
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const renderTask = page.render({ canvasContext: ctx, viewport: viewport });
+    canvas.__pdfQuickRenderTask = renderTask;
+    renderTask.promise.then(() => {
+      canvas.__pdfQuickRenderTask = null;
+    }).catch(err => {
+      canvas.__pdfQuickRenderTask = null;
+      if (err && err.name !== 'RenderingCancelledException') {
+        console.error('Erreur aperçu PDF page ' + pageNum + ' :', err);
+      }
+    });
+  });
+}
+// CORRECTION 2: Cache viewports pour éviter lag zoom
+function renderPDFPage(pdf, pageNum, targetCanvas, useBuffer = true, onComplete = null) {
+  // AJOUT: annule un éventuel aperçu rapide en cours sur ce canvas avant de
+  // démarrer le rendu complet, pour éviter que les deux dessinent en même
+  // temps sur le même élément.
+  if (targetCanvas.__pdfQuickRenderTask) {
+    targetCanvas.__pdfQuickRenderTask.cancel();
+    targetCanvas.__pdfQuickRenderTask = null;
+  }
+  pdf.getPage(pageNum).then((page) => {
+    if (!pageViewports[pageNum]) {
+      pageViewports[pageNum] = page.getViewport({ scale: 1 });
+    }
+    const unscaledViewport = pageViewports[pageNum];
+    const displayWidth = window.innerWidth - 30;
+    const baseScale = (displayWidth / unscaledViewport.width);
+    const currentVisualZoom = window.visualViewport?.scale || 1;
+    const totalScale = baseScale * currentVisualZoom;
+    const viewport = page.getViewport({ scale: totalScale });
+    // AJOUT: on plafonne le pixelRatio à 2 (au lieu de 3 sur certains téléphones).
+    
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const renderCanvas = useBuffer? document.createElement('canvas') : targetCanvas;
+    // AJOUT: Annule tout rendu déjà en cours sur ce canvas avant d'en lancer
+
+    if (renderCanvas.__pdfRenderTask) {
+      renderCanvas.__pdfRenderTask.cancel();
+    }
+    const ctx = renderCanvas.getContext('2d');
+    renderCanvas.width = Math.floor(viewport.width * pixelRatio);
+    renderCanvas.height = Math.floor(viewport.height * pixelRatio);
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    const renderContext = { canvasContext: ctx, viewport: viewport };
+    const renderTask = page.render(renderContext);
+    renderCanvas.__pdfRenderTask = renderTask;
+    renderTask.promise.then(() => {
+      renderCanvas.__pdfRenderTask = null;
+      targetCanvas.style.width = Math.floor(viewport.width / currentVisualZoom) + "px";
+      targetCanvas.style.height = Math.floor(viewport.height / currentVisualZoom) + "px";
+      if (useBuffer) {
+        targetCanvas.width = renderCanvas.width;
+        targetCanvas.height = renderCanvas.height;
+        const targetCtx = targetCanvas.getContext('2d');
+        targetCtx.drawImage(renderCanvas, 0, 0);
+      }
+      if (onComplete) onComplete();
+    }).catch(err => {
+      renderCanvas.__pdfRenderTask = null;
+      // Un rendu annulé volontairement (page déplacée/rechargée) n'est pas une erreur à signaler.
+      if (err && err.name !== 'RenderingCancelledException') {
+        console.error('Erreur rendu PDF page ' + pageNum + ' :', err);
+      }
+      if (onComplete) onComplete();
+    });
+  });
+}
+// CORRECTION 3: Sécurité format avant refresh
+function refreshVisiblePages() {
+  if (!currentPdfDoc || currentFileExtension!== 'pdf') return;
+  const canvases = viewer.querySelectorAll('canvas');
+  const containerRect = viewer.getBoundingClientRect();
+  canvases.forEach(canvas => {
+    const rect = canvas.getBoundingClientRect();
+    const isVisible = (rect.top < containerRect.bottom && rect.bottom > containerRect.top);
+    if (isVisible) {
+      const pageNum = parseInt(canvas.getAttribute('data-page-num'), 10);
+      canvas.setAttribute('data-rendered', '1');
+      renderPDFPage(currentPdfDoc, pageNum, canvas, true);
+    }
+  });
+}
+document.addEventListener('touchend', () => {
+  if (!currentPdfDoc) return;
+  const currentScale = window.visualViewport?.scale || 1;
+  if (Math.abs(currentScale - lastScale) > 0.05) {
+    lastScale = currentScale;
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(refreshVisiblePages, 100);
+  }
+});
+window.addEventListener('resize', () => {
+  if (!currentPdfDoc) return;
+  
+  // On vérifie si la largeur a vraiment changé
+  if (window.innerWidth !== lastWidth) {
+    lastWidth = window.innerWidth; // On met à jour la nouvelle largeur
+    
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(refreshVisiblePages, 150);
+  }
+});
+
+// ========== AJOUT: Boutons flottants haut/bas ==========
+const scrollFabContainer = document.querySelector('.scroll-fab-container');
+let hideFabTimeout = null;
+
+function showScrollFabs() {
+
+    // Aucun document ouvert
+    if (!isDocumentOpen) {
+        scrollFabContainer.classList.remove("visible");
+        return;
+    }
+ 
+if (isZooming) {
+    return;
+}
+    // Rien à faire défiler
+    const maxScroll = viewer.scrollHeight - viewer.clientHeight;
+
+    if (maxScroll <= 0) {
+        scrollFabContainer.classList.remove("visible");
+        return;
+    }
+
+    const topBtn = document.getElementById("scroll-top-btn");
+    const bottomBtn = document.getElementById("scroll-bottom-btn");
+
+    const scrollTop = viewer.scrollTop;
+
+    // Début du document
+    if (scrollTop <= 5) {
+        topBtn.style.display = "none";
+        bottomBtn.style.display = "";
+    }
+
+    // Fin du document
+    else if (scrollTop >= maxScroll - 5) {
+        topBtn.style.display = "";
+        bottomBtn.style.display = "none";
+    }
+
+    // Milieu
+    else {
+        topBtn.style.display = "";
+        bottomBtn.style.display = "";
+    }
+
+    scrollFabContainer.classList.add("visible");
+
+    clearTimeout(hideFabTimeout);
+
+    hideFabTimeout = setTimeout(() => {
+        scrollFabContainer.classList.remove("visible");
+    }, 1500);
+}
+
+viewer.addEventListener('scroll', showScrollFabs, { passive: true });
+
+viewer.addEventListener('touchmove', () => {
+    if (isDocumentOpen) {
+        showScrollFabs();
+    }
+}, { passive: true });
+
+viewer.addEventListener("touchstart", (e) => {
+    if (e.touches.length >= 2) {
+        isZooming = true;
+    }
+}, { passive: true });
+
+viewer.addEventListener("touchend", (e) => {
+    if (e.touches.length < 2) {
+        isZooming = false;
+    }
+}, { passive: true });
+
+document.getElementById('scroll-top-btn').addEventListener('click', () => {
+  viewer.scrollTo({ top: 0, behavior: 'smooth' });
+  showScrollFabs();
+});
+document.getElementById('scroll-bottom-btn').addEventListener('click', () => {
+  viewer.scrollTo({ top: viewer.scrollHeight, behavior: 'smooth' });
+  showScrollFabs();
+});
+
+// ========== AJOUT: Recherche dans le document ==========
+// Fonctionne pour Word (.docx) et Excel (.xlsx), rendus en HTML dans le DOM.
+// Pour les PDF (rendus en <canvas>, sans texte sélectionnable), la recherche
+// n'est pas possible avec le rendu actuel : on prévient l'utilisateur plutôt
+// que de le laisser chercher dans le vide.
+const searchToggleBtn = document.getElementById('search-toggle');
+const searchBar = document.getElementById('search-bar');
+const searchInput = document.getElementById('search-input');
+const searchCount = document.getElementById('search-count');
+const searchPrevBtn = document.getElementById('search-prev');
+const searchNextBtn = document.getElementById('search-next');
+const searchCloseBtn = document.getElementById('search-close');
+let searchMatches = [];
+let searchMatchIndex = -1;
+
+function clearHighlights() {
+  viewer.querySelectorAll('mark.search-hl').forEach(mark => {
+    const parent = mark.parentNode;
+    if (!parent) return;
+    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+    parent.normalize();
+  });
+  searchMatches = [];
+  searchMatchIndex = -1;
+  searchCount.textContent = '';
+}
+
+function runSearch(query) {
+  clearHighlights();
+  if (!query) return;
+
+  if (currentFileExtension === 'pdf') {
+    searchCount.textContent = 'Indispo. sur PDF';
+    return;
+  }
+
+  const lowerQuery = query.toLowerCase();
+  // Parcourt tous les noeuds de texte affichés dans le document
+  const walker = document.createTreeWalker(viewer, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      if (!node.textContent.toLowerCase().includes(lowerQuery)) return NodeFilter.FILTER_SKIP;
+      if (node.parentElement && node.parentElement.closest('script,style')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) textNodes.push(node);
+
+  textNodes.forEach(textNode => {
+    const text = textNode.textContent;
+    const lowerText = text.toLowerCase();
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0;
+    let idx = lowerText.indexOf(lowerQuery);
+    while (idx !== -1) {
+      if (idx > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, idx)));
+      const mark = document.createElement('mark');
+      mark.className = 'search-hl';
+      mark.textContent = text.slice(idx, idx + query.length);
+      frag.appendChild(mark);
+      searchMatches.push(mark);
+      lastIndex = idx + query.length;
+      idx = lowerText.indexOf(lowerQuery, lastIndex);
+    }
+    if (lastIndex < text.length) frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+    textNode.parentNode.replaceChild(frag, textNode);
+  });
+
+  if (searchMatches.length > 0) {
+    searchMatchIndex = 0;
+    goToMatch(0);
+  } else {
+    searchCount.textContent = 'Aucun résultat';
+  }
+}
+
+function goToMatch(index) {
+  if (searchMatches.length === 0) return;
+  searchMatches.forEach(m => m.classList.remove('current'));
+  searchMatchIndex = (index + searchMatches.length) % searchMatches.length;
+  const current = searchMatches[searchMatchIndex];
+  current.classList.add('current');
+  current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  searchCount.textContent = (searchMatchIndex + 1) + ' / ' + searchMatches.length;
+}
+
+function closeSearch() {
+  searchBar.classList.remove('active');
+  searchInput.value = '';
+  clearHighlights();
+}
+
+searchToggleBtn.addEventListener('click', () => {
+  searchBar.classList.toggle('active');
+  if (searchBar.classList.contains('active')) {
+    searchInput.focus();
+  } else {
+    closeSearch();
+  }
+});
+searchCloseBtn.addEventListener('click', closeSearch);
+searchInput.addEventListener('input', () => runSearch(searchInput.value.trim()));
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') goToMatch(searchMatchIndex + 1);
+  if (e.key === 'Escape') closeSearch();
+});
+searchNextBtn.addEventListener('click', () => goToMatch(searchMatchIndex + 1));
+searchPrevBtn.addEventListener('click', () => goToMatch(searchMatchIndex - 1));
+
+// ========== AJOUT: Bibliothèque de fichiers locale (IndexedDB) ==========
+// Permet de garder les fichiers importés disponibles d'une session à l'autre
+// (contrairement au <input type="file"> seul, qui oublie tout au rechargement),
+// avec une recherche par nom et un partage direct depuis la liste.
+const LIBRARY_DB_NAME = 'lecteurLibraryDB';
+const LIBRARY_STORE_NAME = 'files';
+let libraryDbPromise = null;
+
+function openLibraryDB() {
+  if (libraryDbPromise) return libraryDbPromise;
+  libraryDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(LIBRARY_DB_NAME, 2);
+
+request.onupgradeneeded = (e) => {
+  const db = e.target.result;
+
+  let store;
+
+  if (!db.objectStoreNames.contains(LIBRARY_STORE_NAME)) {
+    store = db.createObjectStore(LIBRARY_STORE_NAME, { keyPath: 'id' });
+  } else {
+    store = e.target.transaction.objectStore(LIBRARY_STORE_NAME);
+  }
+
+  if (!store.indexNames.contains('path')) {
+    store.createIndex('path', 'path', { unique: false });
+  }
+};
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return libraryDbPromise;
+}
+
+function saveFileToLibrary(file, path = null, lastModified = null, directory = null) {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+
+    const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(LIBRARY_STORE_NAME);
+
+    const key = path ? `${directory}/${path}` : null;
+
+    if (key) {
+
+      const getReq = store.getAll();
+
+      getReq.onsuccess = () => {
+
+        const existingRecord = getReq.result.find(
+          r => r.path && `${r.directory || "Documents"}/${r.path}` === key
+        );
+
+        if (existingRecord) {
+
+          existingRecord.name = file.name;
+          existingRecord.type = file.type;
+          existingRecord.size = file.size;
+          existingRecord.lastModified = lastModified;
+          existingRecord.directory = directory;
+          existingRecord.blob = file;
+
+          store.put(existingRecord);
+
+        } else {
+
+          const record = {
+            id: crypto.randomUUID
+              ? crypto.randomUUID()
+              : 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+            name: file.name,
+            path,
+            directory,
+            type: file.type,
+            size: file.size,
+            lastModified,
+            date: Date.now(),
+            favorite: false,
+            lastOpened: null,
+            blob: file
+          };
+
+          store.put(record);
+        }
+      };
+
+      getReq.onerror = () => reject(getReq.error);
+
+    } else {
+
+      const record = {
+        id: crypto.randomUUID
+          ? crypto.randomUUID()
+          : 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        name: file.name,
+        path: null,
+        directory: null,
+        type: file.type,
+        size: file.size,
+        lastModified,
+        date: Date.now(),
+        favorite: false,
+        lastOpened: null,
+        blob: file
+      };
+
+      store.put(record);
+    }
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+
+  }));
+}
+
+function getAllLibraryFiles() {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(LIBRARY_STORE_NAME, 'readonly');
+    const request = tx.objectStore(LIBRARY_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(request.result.sort((a, b) => b.date - a.date));
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+function deleteFileFromLibrary(id) {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
+    tx.objectStore(LIBRARY_STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+// AJOUT: patch générique d'un enregistrement (lecture puis écriture), réutilisé
+// par le renommage, le favori/épinglage et l'horodatage de dernière lecture.
+function patchLibraryRecord(id, changes) {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(LIBRARY_STORE_NAME);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const record = getReq.result;
+      if (!record) { resolve(null); return; }
+      Object.assign(record, changes);
+      store.put(record);
+      tx.oncomplete = () => resolve(record);
+    };
+    getReq.onerror = () => reject(getReq.error);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+function renameFileInLibrary(id, newName) {
+  return patchLibraryRecord(id, { name: newName });
+}
+
+function toggleFavoriteInLibrary(id, favorite) {
+  return patchLibraryRecord(id, { favorite });
+}
+
+function markFileOpened(id) {
+  return patchLibraryRecord(id, { lastOpened: Date.now() });
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' o';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' Ko';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' Mo';
+}
+
+function fileIconFor(name) {
+    const ext = name.split('.').pop().toLowerCase();
+
+    let color = "#757575";
+    let label = "FILE";
+
+    if (ext === "pdf") {
+        color = "#E53935";
+        label = "PDF";
+    } else if (ext === "docx") {
+        color = "#1565C0";
+        label = "DOC";
+    } else if (ext === "xlsx") {
+        color = "#2E7D32";
+        label = "XLS";
+    }
+
+    return `
+    <svg width="48" height="56" viewBox="0 0 48 56">
+        <!-- Feuille -->
+        <path
+            d="M8 2h22l10 10v38a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z"
+            fill="#ffffff"
+            stroke="#d9d9d9"
+            stroke-width="1"/>
+
+        <!-- Coin plié -->
+        <path
+            d="M30 2v10h10"
+            fill="#ECECEC"/>
+
+        <path
+            d="M30 2l10 10H30z"
+            fill="#F8F8F8"/>
+
+        <!-- Bande inférieure -->
+        <path
+            d="
+            M4 38
+            H40
+            V50
+            A4 4 0 0 1 36 54
+            H8
+            A4 4 0 0 1 4 50
+            Z"
+            fill="${color}"/>
+
+        <!-- Texte -->
+        <text
+            x="22"
+            y="47"
+            text-anchor="middle"
+            font-family="Arial"
+            font-size="8"
+            font-weight="700"
+            fill="white">
+            ${label}
+        </text>
+    </svg>`;
+}
+
+// Convertit un Blob en base64 via FileReader (flux géré par le navigateur,
+// donc pas de blocage UI même sur un fichier volumineux).
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      // reader.result = "data:<mime>;base64,<data>" -> on ne garde que <data>
+      const dataUrl = reader.result;
+      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function shareFile(record) {
+  const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
+  if (window.Capacitor?.isNativePlatform()) {
+    const { Filesystem, Directory, Share } = window.Capacitor.Plugins || {};
+    if (!Filesystem || !Directory || !Share) {
+      showToast('Plugins Filesystem/Share manquants.', 'error');
+      return;
+    }
+    try {
+      showToast('Préparation du partage...', 'info');
+      const base64Data = await blobToBase64(record.blob);
+
+      const writeResult = await Filesystem.writeFile({
+        path: record.name,
+        data: base64Data,
+        directory: Directory.Cache,
+      });
+
+      // getUri est plus fiable que writeResult.uri sur certaines versions du plugin.
+      const { uri } = await Filesystem.getUri({
+        directory: Directory.Cache,
+        path: record.name,
+      });
+
+      await Share.share({
+        title: record.name,
+        url: uri || writeResult.uri,
+      });
+    } catch (err) {
+      showToast('Le partage natif a échoué : ' + err.message, 'error');
+    }
+    return;
+  }
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: record.name });
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        showToast('Le partage a échoué : ' + err.message, 'error');
+      }
+    }
+  } else {
+    showToast('Le partage de fichiers n\'est pas supporté ici (nécessite HTTPS + un navigateur compatible, ex. Chrome Android).', 'error');
+  }
+}
+
+// ========== TODO CAPACITOR: Scan automatique des fichiers du telephone ==========
+
+const SCAN_EXTENSIONS = ['pdf', 'docx', 'xlsx'];
+const SCAN_DIRECTORIES = [
+    { directory: 'Documents', path: '' },
+    { directory: 'Download', path: '' },
+    // Emplacement WhatsApp "legacy" (Android <= 10 ou stockage partagé classique)
+    { directory: 'ExternalStorage', path: 'WhatsApp/Media/WhatsApp Documents' },
+    // Emplacement WhatsApp scoped storage (Android 11+)
+    { directory: 'ExternalStorage', path: 'Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents' },
+    // Telegram
+    { directory: 'ExternalStorage', path: 'Telegram/Telegram Documents' },
+]; // correspond a Capacitor Directory.Documents / Directory.ExternalStorage
+
+function extOf(name) {
+  return (name.split('.').pop() || '').toLowerCase();
+}
+
+function mimeForExt(ext) {
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  return 'application/octet-stream';
+}
+
+// Convertit une chaine base64 (retournee par Filesystem.readFile) en Blob/File.
+function base64ToFile(base64Data, name, mimeType) {
+  const byteChars = atob(base64Data);
+  const byteNumbers = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) {
+    byteNumbers[i] = byteChars.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  return new File([byteArray], name, { type: mimeType });
+}
+
+// Parcourt recursivement un dossier natif via le plugin Filesystem et
+// retourne la liste des chemins de fichiers dont l'extension correspond.
+async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, path = '') {
+    let matches = [];
+    let entries;
+    try {
+        entries = await Filesystem.readdir({
+            path,
+            directory: Directory[baseDirectory]
+        });
+    } catch (err) {
+        return matches;
+    }
+    for (const entry of entries.files) {
+        const entryPath = path
+            ? `${path}/${entry.name}`
+            : entry.name;
+        const isDir =
+            entry.type === 'directory' ||
+            entry.type === 'folder';
+        if (isDir) {
+            matches = matches.concat(
+                await listNativeFilesRecursive(
+                    Filesystem,
+                    Directory,
+                    baseDirectory,
+                    entryPath
+                )
+            );
+        } else if (SCAN_EXTENSIONS.includes(extOf(entry.name))) {
+            matches.push({
+                path: entryPath,
+                directory: baseDirectory
+            });
+        }
+    }
+    return matches;
+}
+
+// Envoie une notification système locale (visible même si l'utilisateur a
+// changé d'app, tant que l'app reste ouverte en arrière-plan proche).
+// Nécessite le plugin @capacitor/local-notifications côté projet.
+async function notifyNewDocuments(count) {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  const { LocalNotifications } = window.Capacitor.Plugins || {};
+  if (!LocalNotifications) {
+    console.warn("Plugin LocalNotifications manquant.");
+    return;
+  }
+
+  try {
+    const { display } = await LocalNotifications.checkPermissions();
+    if (display !== 'granted') {
+      const req = await LocalNotifications.requestPermissions();
+      if (req.display !== 'granted') return;
+    }
+
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: Date.now() % 2147483647,
+          title: 'Nouveaux documents',
+          body: count === 1
+            ? '1 nouveau document trouvé sur votre téléphone.'
+            : `${count} nouveaux documents trouvés sur votre téléphone.`,
+        },
+      ],
+    });
+  } catch (err) {
+    console.warn("Notification échouée :", err);
+  }
+}
+
+// Scan complet : lit chaque fichier trouve, l'ajoute a la bibliotheque
+// IndexedDB (sans doublons) puis rafraichit l'ecran d'accueil.
+
+async function fullScan() {
+  if (!window.Capacitor?.isNativePlatform()) {
+    showToast("Scan automatique disponible uniquement dans l'app native.", "info");
+    return [];
+  }
+
+  const { Filesystem, Directory } = window.Capacitor.Plugins || {};
+  if (!Filesystem || !Directory) {
+    showToast("Plugin Filesystem manquant.", "error");
+    return [];
+  }
+
+  let paths = [];
+
+  for (const dir of SCAN_DIRECTORIES) {
+    paths.push(
+      ...(await listNativeFilesRecursive(
+        Filesystem,
+        Directory,
+        dir.directory,
+        dir.path
+      ))
+    );
+  }
+
+  await cleanupDeletedNativeFiles(paths);
+
+  if (!paths.length) return [];
+
+  const existing = await getAllLibraryFiles();
+
+  const existingKeys = new Set(
+    existing.map(r =>
+      `${r.directory || ""}/${r.path || r.name}_${r.size}`
+    )
+  );
+
+  const added = [];
+
+  for (const item of paths) {
+    try {
+      const { path, directory } = item;
+
+      const name = path.split("/").pop();
+
+      const stat = await Filesystem.stat({
+        path,
+        directory: Directory[directory]
+      });
+
+      const lastModified = stat.mtime || stat.modified || 0;
+
+      const result = await Filesystem.readFile({
+        path,
+        directory: Directory[directory]
+      });
+
+      const file = base64ToFile(
+        result.data,
+        name,
+        mimeForExt(extOf(name))
+      );
+
+      const key = `${directory}/${path}_${file.size}`;
+
+      if (existingKeys.has(key)) continue;
+
+      const record = await saveFileToLibrary(
+        file,
+        path,
+        lastModified,
+        directory
+      );
+
+      added.push(record);
+
+    } catch (err) {
+      console.warn("Scan natif :", item, err);
+    }
+  }
+
+  if (added.length) {
+    renderHomeFileList();
+    showToast(
+      `${added.length} fichier(s) trouvé(s) et ajouté(s).`,
+      "success"
+    );
+    notifyNewDocuments(added.length);
+  }
+
+  return added;
+}
+
+async function startAutoScan() {
+    try {
+        const lastFullScan = getLastFullScan();
+
+        if (!lastFullScan) {
+            // Premier lancement : scan complet
+            await fullScan();
+            setLastFullScan();
+
+        } else if (Date.now() - lastFullScan >= FULL_SCAN_INTERVAL) {
+            // Scan complet périodique
+            await fullScan();
+            setLastFullScan();
+
+        } else {
+            // Scan rapide des modifications
+            await incrementalScan();
+        }
+
+    } catch (err) {
+        console.warn("Scan automatique échoué :", err);
+    }
+}
+
+async function incrementalScan() {
+    if (!window.Capacitor?.isNativePlatform()) return [];
+
+    const { Filesystem, Directory } = window.Capacitor.Plugins || {};
+    if (!Filesystem || !Directory) return [];
+
+    const index = await getLibraryIndex();
+
+    let paths = [];
+    for (const dir of SCAN_DIRECTORIES) {
+        paths.push(
+            ...(await listNativeFilesRecursive(
+                Filesystem,
+                Directory,
+                dir.directory,
+                dir.path
+            ))
+        );
+    }
+
+    let added = 0;
+
+    for (const item of paths) {
+        try {
+            const { path, directory } = item;
+
+            const stat = await Filesystem.stat({
+                path,
+                directory: Directory[directory]
+            });
+
+            const lastModified = stat.mtime || stat.modified || 0;
+            const existing = index.get(path);
+
+            if (existing?.lastModified === lastModified) continue;
+
+            const name = path.split("/").pop();
+
+            const result = await Filesystem.readFile({
+                path,
+                directory: Directory[directory]
+            });
+
+            const file = base64ToFile(
+                result.data,
+                name,
+                mimeForExt(extOf(name))
+            );
+
+            if (existing) {
+                await patchLibraryRecord(existing.id, {
+                    blob: file,
+                    name,
+                    size: file.size,
+                    type: file.type,
+                    lastModified
+                });
+            } else {
+                await saveFileToLibrary(
+    file,
+    path,
+    lastModified,
+    directory
+                );
+            }
+
+            added++;
+
+        } catch (err) {
+            console.warn("Scan incrémental :", item, err);
+        }
+    }
+
+    await cleanupDeletedNativeFiles(paths);
+
+    if (added) {
+        renderHomeFileList();
+        showToast(`${added} fichier(s) mis à jour ou ajouté(s).`, "success");
+        notifyNewDocuments(added);
+    }
+
+    return added;
+}
+
+async function cleanupDeletedNativeFiles(currentPaths) {
+
+    const existingFiles = await getAllLibraryFiles();
+
+    const nativeFiles = new Set(
+        currentPaths.map(item =>
+            `${item.directory}/${item.path}`
+        )
+    );
+
+    let removed = 0;
+
+    for (const record of existingFiles) {
+
+        // Seulement les fichiers venant du scan natif
+        if (!record.path) continue;
+
+        const key = `${record.directory || "Documents"}/${record.path}`;
+
+        if (!nativeFiles.has(key)) {
+            await deleteFileFromLibrary(record.id);
+            removed++;
+        }
+    }
+
+    if (removed) {
+        renderHomeFileList();
+        showToast(
+            `${removed} fichier(s) supprimé(s) de la bibliothèque car absent(s) du stockage.`,
+            "info"
+        );
+    }
+
+    return removed;
+}
+
+// ========== AJOUT: Ecran d'accueil unifie avec onglets (Tous/PDF/Word/Excel) ==========
+const backHomeBtn = document.getElementById('back-home-btn');
+const menuToggleBtn = document.getElementById('menu-toggle');
+const overflowMenu = document.getElementById('overflow-menu');
+
+let activeFileTab = 'all'; // 'all' | 'pdf' | 'docx' | 'xlsx'
+let homeSearchQuery = '';
+let homeSortMode = 'date'; // 'date' | 'name' | 'size' | 'lastOpened'
+let homeSortDirection = 'desc'; // 'desc' (neuf -> vieux) | 'asc' (vieux -> neuf)
+let homeSelectMode = false;
+let homeSelectedIds = new Set();
+let currentHomeRefs = null; // { listEl, bulkCount, bulkShareBtn, bulkDeleteBtn }
+
+function fileExtOf(name) {
+  return name.split('.').pop().toLowerCase();
+}
+
+function smartFileName(name, availableWidth = 220) {
+
+    const dot = name.lastIndexOf(".");
+    const ext = dot !== -1 ? name.substring(dot) : "";
+    const base = dot !== -1 ? name.substring(0, dot) : name;
+
+    // estimation : un caractère ≈ 7 px
+    const maxChars = Math.max(12, Math.floor(availableWidth / 7));
+
+    if ((base + ext).length <= maxChars)
+        return base + ext;
+
+    const startLength = Math.ceil(maxChars * 0.55);
+    const endLength = Math.max(4, maxChars - startLength - 3);
+
+    return (
+        base.substring(0, startLength) +
+        "..." +
+        base.substring(base.length - endLength) +
+        ext
+    );
+}
+
+// AJOUT: buildLibraryItem construit une ligne de fichier (icone, nom, taille,
+// case a cocher en mode selection, ou boutons partager/supprimer sinon).
+function buildLibraryItem(record, { selectable, onOpen, onAfterChange }) {
+  const item = document.createElement('div');
+  item.className = 'library-item' + (record.favorite ? ' is-favorite' : '');
+  const dateStr = new Date(record.date).toLocaleDateString();
+  const checkboxHtml = selectable
+    ? '<input type="checkbox" class="library-item-checkbox" ' + (homeSelectedIds.has(record.id) ? 'checked' : '') + '>'
+    : '';
+  const actionsHtml = selectable
+    ? ''
+    : '<div class="library-item-actions">' +
+           '<button class="library-action-btn favorite' + (record.favorite ? ' active' : '') + '" data-action="favorite" title="' + (record.favorite ? 'Retirer des favoris' : 'Épingler en favori') + '">' +
+'<svg viewBox="0 0 24 24">' +
+'<path d="M12 2l2.9 6.9L22 9.6l-5.5 4.9L18 22l-6-3.6L6 22l1.5-7.5L2 9.6l7.1-.7L12 2z"/>' +
+'</svg>' +
+'</button>' +
+           '<button class="library-action-btn rename" data-action="rename" title="Renommer">' +
+'<svg viewBox="0 0 24 24">' +
+'<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>' +
+'</svg>' +
+'</button>' +
+           '<button class="library-action-btn share" data-action="share" title="Partager">' +
+
+'<svg viewBox="0 0 24 24">' +
+'<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7a2.5 2.5 0 000-1.39l7-4.11A2.99 2.99 0 0018 7.91a3 3 0 10-3-3c0 .23.03.45.08.66l-7 4.11a3 3 0 100 4.64l7.05 4.14A2.82 2.82 0 0015 19a3 3 0 103-2.92z"/>' +
+'</svg>' +
+
+'</button>' +
+
+'<button class="library-action-btn danger" data-action="delete" title="Supprimer">' +
+
+'<svg viewBox="0 0 24 24">' +
+'<path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/>' +
+'</svg>' +
+
+'</button>'+
+      '</div>';
+  item.innerHTML =
+    checkboxHtml +
+    '<div class="library-item-icon">' + fileIconFor(record.name) + '</div>' +
+    '<div class="library-item-info">' +
+      '<div class="library-item-name"></div>' +
+      '<div class="library-item-meta">' + formatFileSize(record.size) + ' · ' + dateStr + '</div>' +
+    '</div>' +
+    actionsHtml;
+  // AJOUT: nom du fichier insere via textContent (pas innerHTML) pour
+  // eviter tout souci si un nom de fichier contient des caracteres HTML.
+  const nameElement = item.querySelector(".library-item-name");
+
+requestAnimationFrame(() => {
+
+    const info = item.querySelector(".library-item-info");
+    const actions = item.querySelector(".library-item-actions");
+
+    const actionsWidth = actions ? actions.offsetWidth : 0;
+
+    const available = info.clientWidth - actionsWidth - 12;
+
+    nameElement.textContent =
+        smartFileName(record.name, available);
+
+});
+
+  if (selectable) {
+    const checkbox = item.querySelector('.library-item-checkbox');
+    const toggle = () => {
+      checkbox.checked = !checkbox.checked;
+      if (checkbox.checked) homeSelectedIds.add(record.id);
+      else homeSelectedIds.delete(record.id);
+      updateHomeBulkBar();
+    };
+    checkbox.addEventListener('click', (e) => e.stopPropagation());
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) homeSelectedIds.add(record.id);
+      else homeSelectedIds.delete(record.id);
+      updateHomeBulkBar();
+    });
+    item.addEventListener('click', toggle);
+    return item;
+  }
+
+  item.addEventListener('click', async (e) => {
+    const actionBtn = e.target.closest('[data-action]');
+    if (!actionBtn) {
+      onOpen(record);
+      return;
+    }
+    e.stopPropagation();
+    const action = actionBtn.getAttribute('data-action');
+    if (action === 'share') {
+      shareFile(record);
+    } else if (action === 'favorite') {
+      const next = !record.favorite;
+      await toggleFavoriteInLibrary(record.id, next);
+      onAfterChange && onAfterChange();
+      showToast(next ? 'Ajouté aux favoris.' : 'Retiré des favoris.', 'success');
+    } else if (action === 'rename') {
+      const ext = '.' + record.name.split('.').pop();
+      const baseName = record.name.slice(0, -ext.length);
+      const input = await showPrompt('Nouveau nom du fichier :', baseName, { title: 'Renommer le fichier', okLabel: 'Renommer' });
+      if (input) {
+        await renameFileInLibrary(record.id, input + ext);
+        onAfterChange && onAfterChange();
+        showToast('Fichier renommé.', 'success');
+      }
+    } else if (action === 'delete') {
+      const ok = await showConfirm('Supprimer "' + record.name + '" de la bibliothèque ?', {
+        title: 'Supprimer le fichier',
+        icon: '',
+        okLabel: 'Supprimer',
+        cancelLabel: 'Annuler'
+      });
+      if (ok) {
+        await deleteFileFromLibrary(record.id);
+        onAfterChange && onAfterChange();
+        showToast('Fichier supprimé.', 'success');
+      }
+    }
+  });
+  return item;
+}
+
+function updateHomeBulkBar() {
+  if (!currentHomeRefs) return;
+  const n = homeSelectedIds.size;
+  currentHomeRefs.bulkShareBtn.disabled = n === 0;
+  currentHomeRefs.bulkDeleteBtn.disabled = n === 0;
+  if (currentHomeRefs.selectCounter) {
+    currentHomeRefs.selectCounter.textContent = n + ' sélectionné(s)';
+  }
+}
+
+// AJOUT: bascule "Tout sélectionner" / "Tout désélectionner" en tenant compte
+// de l'onglet actif et de la recherche en cours (mêmes fichiers que la liste affichée).
+async function toggleSelectAllHomeFiles() {
+  if (!currentHomeRefs) return;
+  const records = await getAllLibraryFiles();
+  let filtered = activeFileTab === 'all' ? records : records.filter(r => fileExtOf(r.name) === activeFileTab);
+  const q = homeSearchQuery.trim().toLowerCase();
+  if (q) filtered = filtered.filter(r => r.name.toLowerCase().includes(q));
+
+  const allSelected = filtered.length > 0 && filtered.every(r => homeSelectedIds.has(r.id));
+  if (allSelected) {
+    filtered.forEach(r => homeSelectedIds.delete(r.id));
+  } else {
+    filtered.forEach(r => homeSelectedIds.add(r.id));
+  }
+  const btn = currentHomeRefs.selectAllBtn;
+  if (btn) {
+    btn.textContent = allSelected ? 'Tout sélectionner' : 'Tout désélectionner';
+    btn.classList.toggle('active', !allSelected);
+  }
+  renderHomeFileList();
+}
+
+async function bulkShareSelected() {
+  if (homeSelectedIds.size === 0) return;
+  const records = await getAllLibraryFiles();
+  const selected = records.filter(r => homeSelectedIds.has(r.id));
+  const files = selected.map(r => new File([r.blob], r.name, { type: r.type || 'application/octet-stream' }));
+  if (window.Capacitor?.isNativePlatform()) {
+    showToast('Partage natif Capacitor : à implémenter lors de l\'emballage.', 'info');
+    return;
+  }
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try {
+      await navigator.share({ files, title: files.length + ' fichiers' });
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Le partage a échoué : ' + err.message, 'error');
+    }
+  } else {
+    showToast('Le partage groupé de fichiers n\'est pas supporté ici (nécessite HTTPS/localhost + navigateur compatible, ex. Chrome Android).', 'error');
+  }
+}
+
+async function bulkDeleteSelected() {
+  if (homeSelectedIds.size === 0) return;
+  const ids = Array.from(homeSelectedIds);
+  const ok = await showConfirm('Supprimer ' + ids.length + ' fichier(s) de la bibliothèque ?', {
+    title: 'Supprimer les fichiers',
+    icon: '',
+    okLabel: 'Supprimer',
+    cancelLabel: 'Annuler'
+  });
+  if (!ok) return;
+  await Promise.all(ids.map(id => deleteFileFromLibrary(id)));
+  homeSelectMode = false;
+  homeSelectedIds.clear();
+  renderHomeScreen();
+  showToast(ids.length + ' fichier(s) supprimé(s).', 'success');
+}
+
+// AJOUT: applique le mode de tri choisi (nom/date/taille/dernière lecture),
+// puis fait remonter les favoris en tête tout en gardant l'ordre interne.
+function sortHomeFiles(records) {
+  const sorted = [...records];
+  switch (homeSortMode) {
+    case 'name':
+      sorted.sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+      break;
+    case 'size':
+      sorted.sort((a, b) => b.size - a.size);
+      break;
+    case 'lastOpened':
+      sorted.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+      break;
+    case 'date':
+    default:
+      sorted.sort((a, b) => b.date - a.date);
+      break;
+  }
+  if (homeSortDirection === 'asc') sorted.reverse();
+  const favorites = sorted.filter(r => r.favorite);
+  const rest = sorted.filter(r => !r.favorite);
+  return favorites.concat(rest);
+}
+
+// AJOUT: ne reconstruit que la liste (pas les onglets/la recherche), pour ne
+// pas perdre le focus du clavier pendant que l'utilisateur tape une recherche.
+function renderHomeFileList() {
+  if (!currentHomeRefs) return;
+  const { listEl } = currentHomeRefs;
+  getAllLibraryFiles().then(records => {
+    let filtered = activeFileTab === 'all' ? records : records.filter(r => fileExtOf(r.name) === activeFileTab);
+    const q = homeSearchQuery.trim().toLowerCase();
+    if (q) filtered = filtered.filter(r => r.name.toLowerCase().includes(q));
+    filtered = sortHomeFiles(filtered);
+
+    listEl.innerHTML = '';
+    if (filtered.length === 0) {
+      listEl.innerHTML = '<p class="library-empty">Aucun fichier trouvé.</p>';
+    } else {
+      filtered.forEach(record => {
+        const item = buildLibraryItem(record, {
+          selectable: homeSelectMode,
+          onOpen: (r) => {
+            markFileOpened(r.id).catch(() => {});
+            const file = new File([r.blob], r.name, { type: r.type });
+            loadFileIntoViewer(file);
+          },
+          onAfterChange: renderHomeFileList
+        });
+        listEl.appendChild(item);
+      });
+    }
+    updateHomeBulkBar();
+  });
+}
+
+// AJOUT: renderHomeScreen construit l'interface complete (onglets + recherche
+// + bouton "Selectionner" + barre d'actions groupees + liste), affichee
+// directement dans le viewer au demarrage et via le bouton 🏠.
+function renderHomeScreen() {
+  resetViewerState();
+  excelTabs.innerHTML = '';
+  docTitle.textContent = 'Lecteur Multi-Formats';
+  currentFileExtension = '';
+  homeSelectMode = false;
+  homeSelectedIds.clear();
+  isDocumentOpen = false;
+  updateBackFabVisibility();
+  const container = document.createElement('div');
+  container.className = 'home-screen';
+
+  // Onglets de filtre par type
+  const tabsRow = document.createElement('div');
+  tabsRow.className = 'home-tabs-row';
+  const tabDefs = [
+    { key: 'all', label: 'Tous' },
+    { key: 'pdf', label: 'PDF' },
+    { key: 'docx', label: 'Word' },
+    { key: 'xlsx', label: 'Excel' }
+  ];
+  tabDefs.forEach(tab => {
+    const btn = document.createElement('button');
+    btn.className = 'home-tab-btn' + (activeFileTab === tab.key ? ' active' : '');
+    btn.textContent = tab.label;
+    btn.addEventListener('click', () => {
+      activeFileTab = tab.key;
+      tabsRow.querySelectorAll('.home-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderHomeFileList();
+    });
+    tabsRow.appendChild(btn);
+  });
+  container.appendChild(tabsRow);
+
+  // Barre recherche + bouton Sélectionner
+  const toolsRow = document.createElement('div');
+  toolsRow.className = 'home-tools-row';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'home-search-input';
+  searchInput.placeholder = 'Rechercher un fichier...';
+  searchInput.value = homeSearchQuery;
+  searchInput.addEventListener('input', () => {
+    homeSearchQuery = searchInput.value;
+    renderHomeFileList();
+  });
+  const selectCounter = document.createElement('span');
+  selectCounter.className = 'home-select-counter';
+  selectCounter.style.display = 'none';
+  selectCounter.textContent = '0 sélectionné(s)';
+
+  const sortBtn = document.createElement('button');
+  sortBtn.className = 'home-icon-btn home-sort-btn';
+  sortBtn.title = 'Trier par';
+  sortBtn.innerHTML = `
+<svg viewBox="0 0 24 24"><path d="M3 6h12v2H3V6zm0 5h9v2H3v-2zm0 5h6v2H3v-2zM17 4v13.17l-2.59-2.58L13 16l5 5 5-5-1.41-1.41L19 17.17V4h-2z"/></svg>
+`;
+  sortBtn.addEventListener('click', async () => {
+    const result = await showSortSheet(homeSortMode, homeSortDirection);
+    if (!result) return;
+    homeSortMode = result.field;
+    homeSortDirection = result.dir;
+    renderHomeFileList();
+  });
+
+  const selectAllBtn = document.createElement('button');
+  selectAllBtn.className = 'library-select-all-toggle';
+  selectAllBtn.textContent = 'Tout sélectionner';
+  selectAllBtn.style.display = 'none';
+  selectAllBtn.addEventListener('click', toggleSelectAllHomeFiles);
+
+  const selectToggleBtn = document.createElement('button');
+  selectToggleBtn.className = 'home-icon-btn library-select-toggle';
+  selectToggleBtn.title = 'Sélectionner';
+  selectToggleBtn.innerHTML = `
+<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm-1.2 14.6L6.4 12.2l1.4-1.4 2.99 2.99 6.4-6.4 1.4 1.4z"/></svg>
+`;
+  toolsRow.appendChild(searchInput);
+  toolsRow.appendChild(sortBtn);
+  toolsRow.appendChild(selectCounter);
+  toolsRow.appendChild(selectAllBtn);
+  toolsRow.appendChild(selectToggleBtn);
+  container.appendChild(toolsRow);
+
+  // Barre d'actions groupées (masquée tant que le mode sélection n'est pas actif)
+  const bulkBar = document.createElement('div');
+bulkBar.className = 'library-bulk-bar';
+
+// bouton partager (gauche)
+const bulkShareBtn = document.createElement('button');
+bulkShareBtn.className = 'library-action-btn share';
+bulkShareBtn.innerHTML = `
+<svg viewBox="0 0 24 24">
+<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7a2.5 2.5 0 000-1.39l7-4.11A2.99 2.99 0 0018 7.91a3 3 0 10-3-3c0 .23.03.45.08.66l-7 4.11a3 3 0 100 4.64l7.05 4.14A2.82 2.82 0 0015 19a3 3 0 103-2.92z"/>
+</svg>
+<span>Partager</span>
+`;
+
+// bouton supprimer (droite)
+const bulkDeleteBtn = document.createElement('button');
+bulkDeleteBtn.className = 'library-action-btn danger';
+bulkDeleteBtn.innerHTML = `
+<svg viewBox="0 0 24 24">
+<path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/>
+</svg>
+<span>Supprimer</span>
+`;
+
+bulkBar.appendChild(bulkShareBtn);
+bulkBar.appendChild(bulkDeleteBtn);
+container.appendChild(bulkBar);
+ selectToggleBtn.addEventListener('click', () => {
+    homeSelectMode = !homeSelectMode;
+    homeSelectedIds.clear();
+    selectToggleBtn.title = homeSelectMode ? 'Annuler' : 'Sélectionner';
+    selectToggleBtn.innerHTML = homeSelectMode
+      ? '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm-1.2 14.6L6.4 12.2l1.4-1.4 2.99 2.99 6.4-6.4 1.4 1.4z"/></svg>';
+    selectToggleBtn.classList.toggle('active', homeSelectMode);
+    bulkBar.classList.toggle('active', homeSelectMode);
+    toolsRow.classList.toggle('select-mode', homeSelectMode);
+    selectCounter.style.display = homeSelectMode ? 'inline' : 'none';
+    selectAllBtn.style.display = homeSelectMode ? 'inline-block' : 'none';
+    selectAllBtn.classList.remove('active');
+    selectAllBtn.textContent = 'Tout sélectionner';
+    renderHomeFileList();
+  });
+  bulkShareBtn.addEventListener('click', bulkShareSelected);
+  bulkDeleteBtn.addEventListener('click', bulkDeleteSelected);
+
+  // Conteneur de la liste de fichiers
+  const listEl = document.createElement('div');
+  listEl.className = 'home-file-list';
+  container.appendChild(listEl);
+
+  viewer.innerHTML = '';
+  viewer.appendChild(container);
+  currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
+  }
+function goHome() {
+  renderHomeScreen();
+}
+
+// AJOUT: le FAB "← Accueil" ne s'affiche qu'en aperçu fichier (isDocumentOpen === true).
+// On l'active/désactive à chaque fois qu'on ouvre un document ou qu'on revient à l'accueil.
+function updateBackFabVisibility() {
+  backHomeBtn.classList.toggle('active', isDocumentOpen);
+}
+
+backHomeBtn.addEventListener('click', () => {
+  goHome();
+  updateBackFabVisibility();
+});
+
+// AJOUT: menu overflow (⋮) regroupant les actions ("Ouvrir un fichier")
+menuToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  overflowMenu.classList.toggle('active');
+});
+document.addEventListener('click', (e) => {
+  if (!overflowMenu.contains(e.target) && e.target !== menuToggleBtn) {
+    overflowMenu.classList.remove('active');
+  }
+});
+overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', () => {
+  overflowMenu.classList.remove('active');
+});
+
+// Affiche l'écran d'accueil dès le chargement de l'app.
+renderHomeScreen();
+
+// Demande la permission de notification dès l'ouverture de l'app (plutôt
+// que d'attendre le premier fichier trouvé), pour ne pas rater la toute
+// première notification si l'utilisateur met du temps à répondre.
+async function requestNotificationPermissionOnStartup() {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  const { LocalNotifications } = window.Capacitor.Plugins || {};
+  if (!LocalNotifications) return;
+
+  try {
+    const { display } = await LocalNotifications.checkPermissions();
+    if (display !== 'granted') {
+      await LocalNotifications.requestPermissions();
+    }
+  } catch (err) {
+    console.warn("Demande de permission notification échouée :", err);
+  }
+}
+
+requestNotificationPermissionOnStartup().finally(() => {
+  startAutoScan().catch(err =>
+      console.warn('Scan natif au demarrage : echec', err)
+  );
+});
+</script>
+</body>
+</html>
