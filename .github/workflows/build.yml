@@ -26,10 +26,14 @@ jobs:
     - name: Installation des dépendances
       run: npm install
 
-    - name: Initialisation de l'environnement Android Capacitor
+    - name: Initialisation ou vérification de la plateforme Android
       run: |
-        npx cap init "Mon Lecteur" "com.monlecteur.app" --web-dir=www
-        npx cap add android
+        if [ ! -d "android" ]; then
+          echo "Le dossier Android n'existe pas. Création de la plateforme..."
+          npx cap add android
+        else
+          echo "Le dossier Android existe déjà. Passage à la synchronisation."
+        fi
 
     - name: Injection forcée des permissions de scan global et notifications
       run: |
