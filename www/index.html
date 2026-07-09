@@ -3068,7 +3068,11 @@ async function bulkShareSelected() {
       await navigator.share({ files, title: files.length + ' fichiers' });
       showToast(files.length + ' fichier(s) partagé(s)', 'success');
     } catch (err) {
-      if (err.name !== 'AbortError') showToast('Le partage a échoué : ' + err.message, 'error');
+      // En natif, l'override de navigator.share affiche déjà son propre toast
+      // d'erreur avant de relancer l'exception : on évite d'en afficher un 2e ici.
+      if (!window.Capacitor?.isNativePlatform() && err.name !== 'AbortError') {
+        showToast('Le partage a échoué : ' + err.message, 'error');
+      }
     }
   } else {
     showToast('Le partage groupé de fichiers n\'est pas supporté ici', 'error');
@@ -3812,12 +3816,15 @@ document.addEventListener('visibilitychange', () => {
         for (let fichierWeb of donneesPartage.files) {
           // 1. Convertir le fichier web (Blob/File) en Base64 pour l'écrire physiquement
           const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
-          
-          // 2. Écrire temporairement le fichier dans le stockage pour qu'Android puisse le voir
+
+          // 2. Écrire temporairement le fichier dans le cache de l'app (privé, ne
+          // nécessite AUCUNE permission de stockage, contrairement à Directory.Documents
+          // qui échouait silencieusement tant que la permission stockage n'était pas
+          // accordée - c'est ce qui causait "Erreur lors du partage natif").
           const fichierEcrit = await Filesystem.writeFile({
-            path: `Documents/PartageTmp_${fichierWeb.name}`,
+            path: `PartageTmp_${Date.now()}_${fichierWeb.name}`,
             data: donneesBase64,
-            directory: Directory.Documents
+            directory: Directory.Cache
           });
 
           urisFichiersNatifs.push(fichierEcrit.uri);
@@ -3833,8 +3840,11 @@ document.addEventListener('visibilitychange', () => {
         console.error("Échec du partage Sharesheet Natif :", erreur);
         // En cas de problème, affichage via ton système de Toast personnalisé
         if (typeof showToast === "function") {
-          showToast("Erreur lors du partage natif", "error");
+          showToast("Erreur lors du partage natif : " + (erreur?.message || erreur), "error");
         }
+        // IMPORTANT : on relance l'erreur pour que l'appelant (bulkShareSelected)
+        // sache que ça a échoué et n'affiche pas un faux toast de succès.
+        throw erreur;
       }
     };
   }
