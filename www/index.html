@@ -3,17 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <!-- Libs locales pour mode hors ligne -->
-<script src="jszip.min.js"></script>
-<script src="docx-preview.min.js"></script>
-<script src="pdf.min.js"></script>
-<script src="xlsx.full.min.js"></script>
+<script src="libs/jszip.min.js"></script>
+<script src="libs/docx-preview.min.js"></script>
+<script src="libs/pdf.min.js"></script>
+<script src="libs/xlsx.full.min.js"></script>
 <style>
+:root { color-scheme: light; }
 body {
   font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
-  background-color: #121212;
-  color: #ffffff;
+  background-color: #ffffff;
+  color: #1a1a1a;
   margin: 0;
   padding: 0;
   display: flex;
@@ -26,25 +28,54 @@ body {
 }
 /* Barre d'outils */
 .toolbar {
-  background-color: #1f1f1f;
-  padding: 12px 20px;
+  background-color: #ffffff;
+  padding: 14px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 2px solid #00adb5;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  border-bottom: none;
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 4px 14px rgba(0,173,181,0.18), 0 1px 0 rgba(0,0,0,0.03);
+  position: relative;
   z-index: 10;
 }
+.toolbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background: linear-gradient(90deg, #00c2cb, #00adb5, #007a80);
+  border-radius: 0 0 16px 16px;
+}
 .title {
-  font-size: 1.1rem;
-  font-weight: bold;
+  font-size: 1.15rem;
+  font-weight: 700;
   color: #00adb5;
+  letter-spacing: 0.2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
   flex: 1 1 auto;
   margin-right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+/* Boutons de l'entête : pastille douce, cohérente avec les icônes de l'accueil */
+.toolbar .btn,
+.toolbar .back-fab {
+  background-color: #e6f8f9;
+  color: #00838f;
+  border: 1px solid #b8ecef;
+  box-shadow: none;
+}
+.toolbar .btn:active,
+.toolbar .back-fab:active {
+  background-color: #cdf1f3;
+  color: #006569;
 }
 .btn {
   background-color: #00adb5;
@@ -68,17 +99,19 @@ body {
 }
 /* AJOUT: Menu overflow (⋮) */
 .menu-wrap { position: relative; flex-shrink: 0; }
+/* AJOUT: masquage garanti des boutons recherche/menu selon le contexte */
+.top-btn-hidden { display: none !important; }
 .overflow-menu {
   display: none;
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  background-color: #1f1f1f;
+  background-color: #ffffff;
   border: 1px solid #00adb5;
   border-radius: 12px;
   overflow: hidden;
   min-width: 190px;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
   z-index: 20;
 }
 .overflow-menu.active { display: block; }
@@ -89,19 +122,189 @@ body {
   padding: 12px 16px;
   background: none;
   border: none;
-  color: #eee;
+  color: #222;
   font-size: 0.9rem;
   text-align: left;
   cursor: pointer;
   box-sizing: border-box;
 }
 .overflow-menu button:active,
-.overflow-menu label:active { background-color: #007a80; }
+.overflow-menu label:active { background-color: #007a80; color: #fff; }
 .overflow-menu button + button,
 .overflow-menu label + button,
 .overflow-menu button + label {
-  border-top: 1px solid #333;
+  border-top: 1px solid #eee;
 }
+/* AJOUT: écran dédié du mini-jeu Snake */
+.game-screen {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background-color: #ffffff;
+  flex-direction: column;
+  height: 100vh;
+}
+.game-screen.active { display: flex; }
+.game-toolbar {
+  background: #fff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  border-bottom: 2px solid #00adb5;
+  box-shadow: 0 4px 10px rgba(0,0,0,.08);
+  flex-shrink: 0;
+}
+.game-toolbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+}
+.game-toolbar .title {
+  font-weight: 700;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+.game-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.game-score {
+  font-weight: bold;
+  color: #00adb5;
+  font-size: .95rem;
+  white-space: nowrap;
+}
+.game-pause-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: #00adb5;
+  color: white;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.game-pause-btn:active {
+  background: #007a80;
+}
+.game-board-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: #f4faf9;
+  padding: 12px;
+  box-sizing: border-box;
+}
+#game-canvas {
+  background-color: #1a1a2e;
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+  max-width: 100%;
+  max-height: 100%;
+  touch-action: none;
+}
+.game-overlay {
+  position: absolute;
+  inset: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background-color: rgba(26,26,46,0.85);
+  border-radius: 14px;
+  color: #fff;
+  text-align: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+.game-overlay.hidden { display: none; }
+.game-overlay-title { font-size: 1.5rem; font-weight: bold; }
+.game-overlay-sub { font-size: 0.9rem; opacity: 0.85; max-width: 260px; }
+.game-dpad {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0 22px;
+ position: relative;
+ background-color: #ffffff;
+}
+.game-dpad-row {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+.game-dpad-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  border: none;
+  background-color: #00adb5;
+  color: #fff;
+  font-size: 1.3rem;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  touch-action: manipulation;
+  user-select: none;
+}
+.game-dpad-btn:active { background-color: #007a80; }
+.game-dpad-pause-zone {
+  width: 56px;
+  height: 56px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  touch-action: manipulation;
+}
+.pause-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 150px;
+  text-align: center;
+  font-size: .78rem;
+  line-height: 1.25;
+  font-weight: 600;
+  color: #007a80;
+  background: rgba(255,255,255,.92);
+  padding: 8px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  z-index: 6;
+  pointer-events: none;
+}
+.pause-hint button {
+  pointer-events: auto;
+  margin-left: 8px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,.08);
+  color: #555;
+  font-size: 1.2rem;
+  line-height: 36px;
+  padding: 0;
+  opacity: .9;
+}
+
 /* AJOUT: FAB retour à l'accueil (visible uniquement en aperçu fichier) */
 .back-fab {
   display: none;
@@ -130,38 +333,38 @@ body {
   display: none;
   align-items: center;
   gap: 8px;
-  background-color: #1a1a1a;
+  background-color: #f5f5f5;
   padding: 8px 12px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid #ddd;
 }
 .search-bar.active { display: flex; }
 #search-input {
   flex: 1;
   min-width: 0;
-  background-color: #2d2d2d;
-  border: 1px solid #444;
-  color: #fff;
+  background-color: #ffffff;
+  border: 1px solid #ccc;
+  color: #111;
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 0.9rem;
 }
 .search-count {
-  color: #aaa;
+  color: #666;
   font-size: 0.8rem;
   white-space: nowrap;
   min-width: 50px;
   text-align: center;
 }
 .search-nav-btn {
-  background-color: #2d2d2d;
-  color: #fff;
+  background-color: #eeeeee;
+  color: #111;
   border: none;
   border-radius: 6px;
   padding: 8px 10px;
   cursor: pointer;
   flex-shrink: 0;
 }
-.search-nav-btn:active { background-color: #007a80; }
+.search-nav-btn:active { background-color: #007a80; color: #fff; }
 mark.search-hl {
   background-color: #ffe066;
   color: #000;
@@ -202,26 +405,79 @@ mark.search-hl.current {
 /* AJOUT: Ecran d'accueil unifié avec onglets (Tous/PDF/Word/Excel),
    recherche et sélection multiple - remplace l'ancien panneau modal. */
 .home-tabs-row {
-  display: flex;
-  gap: 8px;
+  position: relative;
   padding: 12px 10px 4px;
-  overflow-x: auto;
 }
-.home-tab-btn {
-  background-color: #2d2d2d;
-  color: #ccc;
+.home-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #1a1a1a;
+  font-size: 1.05rem;
+  font-weight: 800;
+  padding: 4px 2px;
+}
+.home-filter-btn .home-filter-count {
+  color: #777;
+  font-weight: 600;
+}
+.home-filter-btn .home-filter-arrow {
+  background: none;
   border: none;
-  padding: 8px 16px;
-  border-radius: 20px;
+  color: #555;
+  font-size: 1.4rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+  margin-left: 2px;
+  padding: 10px 12px;
   cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: bold;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
-.home-tab-btn.active {
-  background-color: #00adb5;
-  color: #fff;
+.home-filter-btn.open .home-filter-arrow {
+  transform: rotate(180deg);
+}
+.home-filter-dropdown {
+  position: fixed;
+  top: 0;
+  left: 0;
+  background-color: #fff;
+  color: #111;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 6px 18px;
+  width: 220px;
+  z-index: 500;
+  display: none;
+}
+.home-filter-dropdown.active {
+  display: block;
+}
+.home-filter-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 0;
+  cursor: pointer;
+}
+.home-filter-option:not(:last-child) {
+  border-bottom: 1px solid #eee;
+}
+.home-filter-option .home-filter-option-label {
+  font-weight: 800;
+  font-size: 1rem;
+  text-transform: uppercase;
+  color: #111;
+}
+.home-filter-option .home-filter-option-count {
+  font-weight: 600;
+  color: #9aa0a6;
+  margin-left: 4px;
+}
+.home-filter-option input[type="radio"] {
+  width: 22px;
+  height: 22px;
+  accent-color: #1976f0;
+  flex-shrink: 0;
+  margin: 0;
 }
 .home-tools-row {
   display: flex;
@@ -252,9 +508,9 @@ mark.search-hl.current {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
-  background-color: #2d2d2d;
-  border: 1px solid #444;
-  color: #fff;
+  background-color: #ffffff;
+  border: 1px solid #ccc;
+  color: #111;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 0.9rem;
@@ -265,9 +521,9 @@ mark.search-hl.current {
   width: 38px;
   height: 38px;
   padding: 0;
-  background-color: #2d2d2d;
-  border: 1px solid #444;
-  color: #ccc;
+  background-color: #ffffff;
+  border: 1px solid #ccc;
+  color: #444;
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -301,11 +557,11 @@ mark.search-hl.current {
   align-items: center;
   gap: 10px;
   padding: 12px 10px;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid #eee;
   cursor: pointer;
 }
 
-.library-item:active { background-color: #262626; }
+.library-item:active { background-color: #f2f2f2; }
 .library-item-icon{
     width:52px;
     height:52px;
@@ -333,7 +589,7 @@ mark.search-hl.current {
     overflow:hidden;
     text-overflow:ellipsis;
 }
-.library-item-meta { font-size: 0.75rem; color: #999; margin-top: 2px; }
+.library-item-meta { font-size: 0.75rem; color: #777; margin-top: 2px; }
 .library-item-actions{
     display:flex;
     align-items:center;
@@ -348,7 +604,7 @@ mark.search-hl.current {
     justify-content:center;
     align-items:center;
 
-    background:#202020;
+    background:#eeeeee;
     border:none;
     border-radius:50%;
 
@@ -360,11 +616,11 @@ mark.search-hl.current {
 .library-action-btn svg{
     width:20px;
     height:20px;
-    fill:#cfd8dc;
+    fill:#555;
 }
 
 .library-action-btn:hover{
-    background:#323232;
+    background:#e0e0e0;
 }
 
 .library-action-btn:active{
@@ -385,12 +641,15 @@ mark.search-hl.current {
     fill:#ffc107;
 }
 .library-action-btn.rename svg{
-    fill:#bbb;
+    fill:#666;
+}
+.library-action-btn.more svg{
+    fill:#666;
 }
 .library-item.is-favorite{
     border-left: 3px solid #ffc107;
 }
-.library-empty { color: #aaa; text-align: center; padding: 40px 20px; font-style: italic; }
+.library-empty { color: #777; text-align: center; padding: 40px 20px; font-style: italic; }
 /* AJOUT: Ecran d'accueil = liste des fichiers de la bibliotheque affichee
    directement dans le viewer au demarrage (pas besoin d'ouvrir le panneau). */
 .home-screen{
@@ -401,7 +660,7 @@ mark.search-hl.current {
     overflow-x:hidden;
 }
 .home-screen-title {
-  color: #999;
+  color: #777;
   font-size: 0.85rem;
   padding: 12px 10px 4px;
 }
@@ -424,8 +683,8 @@ mark.search-hl.current {
   justify-content: space-between;
 
   padding: 10px 14px;
-  background: #1e1e1e;
-  border-top: 1px solid #333;
+  background: #f5f5f5;
+  border-top: 1px solid #ddd;
   z-index: 9999;
 }
 
@@ -470,21 +729,31 @@ mark.search-hl.current {
   margin-right: 8px;
 }
 .home-select-counter {
-  color: #ccc;
+  color: #444;
   font-size: 0.85rem;
   white-space: nowrap;
   margin-right: 4px;
 }
 .library-select-all-toggle {
-  background: none;
-  border: 1px solid #444;
-  color: #ccc;
-  border-radius: 20px;
-  padding: 6px 12px;
-  font-size: 0.8rem;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background-color: #ffffff;
+  border: 1px solid #ccc;
+  color: #444;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   margin-right: 8px;
-  white-space: nowrap;
+}
+.library-select-all-toggle svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
 }
 .library-select-all-toggle.active {
   background-color: #00adb5;
@@ -495,15 +764,15 @@ mark.search-hl.current {
 /* AJOUT: Style onglets Excel */
 .tabs-container {
   display: flex;
-  background-color: #1a1a1a;
-  border-bottom: 1px solid #333;
+  background-color: #f5f5f5;
+  border-bottom: 1px solid #ddd;
   overflow-x: auto;
   padding: 6px 10px;
   gap: 6px;
 }
 .sheet-button {
-  background-color: #2d2d2d;
-  color: #ccc;
+  background-color: #eeeeee;
+  color: #333;
   border: none;
   padding: 8px 14px;
   border-radius: 6px;
@@ -517,13 +786,13 @@ mark.search-hl.current {
   color: white;
   font-weight: bold;
 }
-.sheet-button:active { background-color: #007a80; }
+.sheet-button:active { background-color: #007a80; color: #fff; }
 /* Zone de visualisation principale */
 .viewer-container {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
-  background-color: #2d2d2d;
+  background-color: #f0f0f0;
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -533,7 +802,7 @@ mark.search-hl.current {
   -webkit-overflow-scrolling: touch;
 }
 canvas {
-  box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.25);
   background-color: white;
   max-width: 100%;
   display: block;
@@ -546,7 +815,7 @@ canvas {
   max-width: 800px;
   width: 100%;
   box-sizing: border-box;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.15);
   border-radius: 4px;
   overflow-x: auto;
 }
@@ -581,7 +850,7 @@ canvas {
 }
 .document-wrapper tr:hover { background-color: #f9f9f9!important; }
 #file-input { display: none; }
-.info-text { color: #aaa; font-style: italic; text-align: center; margin-top: 40px; }
+.info-text { color: #777; font-style: italic; text-align: center; margin-top: 40px; }
 .loading { color: #00adb5; text-align: center; margin-top: 60px; font-size: 1.1rem; }
 /* Permet au tableau de défiler horizontalement sans déformer l'application */
 .document-wrapper {
@@ -634,9 +903,8 @@ canvas {
   padding: 8px 12px !important;
   text-align: left;
 }
-/* Empêche la coupure du texte au niveau des tirets (ex: SI1-SI2).
-   !important + ciblage des enfants (p, span) car docx-preview applique
-   souvent son propre style de retour à la ligne directement dessus. */
+/* Empêche la coupure du texte au niveau des tirets (ex: SI1-SI2).*/
+
 .docx-wrapper td, .docx-wrapper th,
 .docx-wrapper td *, .docx-wrapper th * {
   white-space: nowrap !important;
@@ -656,9 +924,7 @@ canvas {
   border: none !important;
 }
 /* Neutralise le float:left intégré dans le style du tableau des horaires
-   (confirmé par le diagnostic : class "docx_grilledutableau" avec float:left).
-   C'est ce float qui faisait remonter "Le Responsable" à côté du tableau
-   au lieu de passer dessous, comportement CSS classique d'un float. */
+*/
 .docx-wrapper .docx table[style*="float"] {
   float: none !important;
   clear: both !important;
@@ -679,16 +945,17 @@ canvas {
   pointer-events: none;
 }
 .toast {
-  background-color: #262626;
-  color: #fff;
+  background-color: #ffffff;
+  color: #1a1a1a;
   padding: 12px 16px;
   border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.2);
   font-size: 14px;
   line-height: 1.4;
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  border: 1px solid #eee;
   border-left: 4px solid #3a86ff;
   opacity: 0;
   transform: translateY(-10px);
@@ -731,13 +998,13 @@ canvas {
   display: flex;
 }
 .confirm-box {
-  background-color: #1f1f1f;
-  color: #fff;
+  background-color: #ffffff;
+  color: #1a1a1a;
   border-radius: 14px;
   width: 100%;
   max-width: 340px;
   padding: 20px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
   animation: confirmPop 0.2s ease;
 }
 @keyframes confirmPop {
@@ -754,7 +1021,7 @@ canvas {
 }
 .confirm-box .confirm-msg {
   font-size: 14px;
-  color: #ccc;
+  color: #555;
   margin-bottom: 20px;
   line-height: 1.4;
 }
@@ -771,8 +1038,8 @@ canvas {
   cursor: pointer;
 }
 .confirm-box .confirm-cancel {
-  background-color: #3a3a3a;
-  color: #fff;
+  background-color: #eeeeee;
+  color: #1a1a1a;
 }
 .confirm-box .confirm-ok {
   background-color: #e74c3c;
@@ -794,9 +1061,9 @@ canvas {
 .prompt-input {
   width: 100%;
   box-sizing: border-box;
-  background-color: #2d2d2d;
-  border: 1px solid #444;
-  color: #fff;
+  background-color: #ffffff;
+  border: 1px solid #ccc;
+  color: #111;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 14px;
@@ -814,6 +1081,16 @@ canvas {
   z-index: 10001;
 }
 #sortSheetOverlay.active { display: flex; }
+#fileActionsSheetOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 10001;
+}
+#fileActionsSheetOverlay.active { display: flex; }
 .sort-sheet {
   background-color: #fff;
   color: #111;
@@ -879,6 +1156,36 @@ canvas {
   margin-top: 14px;
   cursor: pointer;
 }
+/* ===== Panneau "Options" (favori / renommer / supprimer) ===== */
+.file-action-row{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  width:100%;
+  background:none;
+  border:none;
+  padding:14px 4px;
+  font-size:1rem;
+  font-family:inherit;
+  color:#111;
+  text-align:left;
+  cursor:pointer;
+}
+.file-action-row svg{
+  width:22px;
+  height:22px;
+  fill:#555;
+  flex-shrink:0;
+}
+.file-action-row.danger{
+  color:#ff5252;
+}
+.file-action-row.danger svg{
+  fill:#ff5252;
+}
+.file-action-row #fileActionFavoriteIcon.active{
+  fill:#ffc107;
+}
 </style>
 </head>
 <body>
@@ -919,16 +1226,38 @@ canvas {
     <button class="sort-ok-btn" id="sortSheetOkBtn">OK</button>
   </div>
 </div>
+<div id="fileActionsSheetOverlay">
+  <div class="sort-sheet">
+    <div class="sort-sheet-header">
+      <h3>Options</h3>
+      <button class="sort-sheet-close" id="fileActionsSheetCloseBtn">✕</button>
+    </div>
+    <button class="file-action-row" id="fileActionFavoriteBtn" data-action="favorite">
+      <svg id="fileActionFavoriteIcon" viewBox="0 0 24 24"><path d="M12 2l2.9 6.9L22 9.6l-5.5 4.9L18 22l-6-3.6L6 22l1.5-7.5L2 9.6l7.1-.7L12 2z"/></svg>
+      <span id="fileActionFavoriteLabel">Épingler en favori</span>
+    </button>
+    <button class="file-action-row" data-action="rename">
+      <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      <span>Renommer</span>
+    </button>
+    <div class="sort-divider"></div>
+    <button class="file-action-row danger" data-action="delete">
+      <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/></svg>
+      <span>Supprimer</span>
+    </button>
+  </div>
+</div>
 <div class="toolbar">
   <button class="back-fab" id="back-home-btn" title="Retour à l'accueil">
     <span class="back-arrow">←</span><span>Accueil</span>
   </button>
   <div class="title" id="doc-title">Lecteur Multi-Formats</div>
-  <button class="btn btn-icon" id="search-toggle" title="Rechercher dans le document">🔍</button>
-  <div class="menu-wrap">
+  <button class="btn btn-icon top-btn-hidden" id="search-toggle" title="Rechercher dans le document">🔍</button>
+  <div class="menu-wrap" id="menu-wrap">
     <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
     <div class="overflow-menu" id="overflow-menu">
       <label for="file-input">Ouvrir un fichier</label>
+      <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
     </div>
   </div>
   <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
@@ -949,7 +1278,50 @@ canvas {
   <button class="scroll-fab" id="scroll-bottom-btn" title="Aller en bas">▼</button>
 </div>
 
+<!-- AJOUT: écran dédié au mini-jeu (Snake), entièrement séparé du lecteur -->
+<div class="game-screen" id="game-screen">
+  <div class="game-toolbar">
+  <button class="back-fab active" id="game-back-btn" title="Retour à l'accueil">
+    <span class="back-arrow">←</span>
+    <span>Accueil</span>
+  </button>
+  <div class="game-toolbar-center">
+    <div class="title">🐍 Snake</div>
+  </div>
+  <div class="game-toolbar-right">
+    <div class="game-score">
+      🏆 <span id="game-score-val">0</span>
+    </div>
+    <button id="game-pause-btn" class="game-pause-btn" title="Pause">
+      ⏸
+    </button>
+  </div>
+</div>
+  <div class="game-board-wrap">
+    <canvas id="game-canvas"></canvas>
+    <div class="game-overlay" id="game-overlay">
+      <div class="game-overlay-title" id="game-overlay-title">Snake</div>
+      <div class="game-overlay-sub" id="game-overlay-sub">Glissez pour diriger le serpent</div>
+      <button class="btn" id="game-start-btn">Jouer</button>
+    </div>
+  </div>
+  
+    <div class="game-dpad">
+    <button class="game-dpad-btn" id="game-up" data-dir="up">▲</button>
+    <div class="game-dpad-row">
+      <button class="game-dpad-btn" id="game-left" data-dir="left">◀</button>
+      <div class="game-dpad-pause-zone" id="game-dpad-pause-zone"></div>
+      <button class="game-dpad-btn" id="game-right" data-dir="right">▶</button>
+    </div>
+    <button class="game-dpad-btn" id="game-down" data-dir="down">▼</button>
+    <div class="pause-hint" id="pause-hint">
+  Touchez le centre des flèches pour mettre en pause
+  <button id="pause-hint-close" aria-label="Fermer">×</button>
+</div>
+</div>
+
 <script>
+
 // ===== Notifications stylées (remplace alert()) =====
 function showToast(message, type = 'info', duration = 3200) {
   const container = document.getElementById('toastContainer');
@@ -1064,6 +1436,40 @@ function showSortSheet(currentField, currentDir) {
   });
 }
 
+// ===== Panneau "Options" (favori / renommer / supprimer) =====
+function showFileActionsSheet(record) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('fileActionsSheetOverlay');
+    const closeBtn = document.getElementById('fileActionsSheetCloseBtn');
+    const favLabel = document.getElementById('fileActionFavoriteLabel');
+    const favIcon = document.getElementById('fileActionFavoriteIcon');
+    const rows = overlay.querySelectorAll('.file-action-row');
+
+    favLabel.textContent = record.favorite ? 'Retirer des favoris' : 'Épingler en favori';
+    favIcon.classList.toggle('active', !!record.favorite);
+
+    overlay.classList.add('active');
+
+    function cleanup(result) {
+      overlay.classList.remove('active');
+      rows.forEach(r => r.removeEventListener('click', onRowClick));
+      closeBtn.removeEventListener('click', onClose);
+      overlay.removeEventListener('click', onOverlayClick);
+      resolve(result);
+    }
+    function onRowClick(e) {
+      const row = e.currentTarget;
+      cleanup(row.getAttribute('data-action'));
+    }
+    function onClose() { cleanup(null); }
+    function onOverlayClick(e) { if (e.target === overlay) cleanup(null); }
+
+    rows.forEach(r => r.addEventListener('click', onRowClick));
+    closeBtn.addEventListener('click', onClose);
+    overlay.addEventListener('click', onOverlayClick);
+  });
+}
+
 // ===== Saisie texte stylée (remplace prompt()) =====
 function showPrompt(message, defaultValue = '', options = {}) {
   const { title = 'Renommer', okLabel = 'Valider', cancelLabel = 'Annuler' } = options;
@@ -1106,7 +1512,7 @@ function showPrompt(message, defaultValue = '', options = {}) {
 }
 
 // Worker local pour PDF
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
 const fileInput = document.getElementById('file-input');
 const viewer = document.getElementById('viewer');
 const docTitle = document.getElementById('doc-title');
@@ -1183,10 +1589,8 @@ function loadFileIntoViewer(file) {
   docTitle.textContent = file.name;
   isDocumentOpen = true;
   updateBackFabVisibility();
+  updateTopBarButtons();
   // AJOUT: Pour un PDF, on évite de lire tout le fichier en mémoire d'abord
-  // (FileReader + Uint8Array) car ça retarde l'ouverture sur les gros fichiers.
-  // On donne directement une URL blob à pdf.js, qui peut alors lire le fichier
-  // par petits morceaux (streaming/range) et afficher la 1ère page bien plus vite.
   if (currentFileExtension === 'pdf') {
     openPdfFile(file);
     return;
@@ -1259,8 +1663,6 @@ function loadFileIntoViewer(file) {
   fileReader.readAsArrayBuffer(file);
 }
 // AJOUT: sélectionner un ou plusieurs fichiers les sauvegarde tous dans la
-// bibliothèque locale (IndexedDB) pour qu'ils restent disponibles d'une
-// session à l'autre, puis ouvre directement le premier dans le lecteur.
 fileInput.addEventListener('change', (e) => {
   const files = Array.from(e.target.files || []);
   if (files.length === 0) return;
@@ -1269,10 +1671,6 @@ fileInput.addEventListener('change', (e) => {
   fileInput.value = ''; // permet de resélectionner le(s) même(s) fichier(s) plus tard
 });
 // AJOUT: Ouverture PDF en streaming. On passe une URL blob à pdf.js au lieu
-// d'attendre la lecture complète du fichier (FileReader) : pdf.js peut alors
-// commencer à parser l'en-tête/la table des pages et afficher la 1ère page
-// bien avant que tout le fichier soit chargé, ce qui accélère nettement
-// l'ouverture des PDF volumineux.
 function openPdfFile(file) {
   viewer.innerHTML = '';
   const fileURL = URL.createObjectURL(file);
@@ -1281,19 +1679,12 @@ function openPdfFile(file) {
     currentPdfDoc = pdf;
     lastScale = window.visualViewport?.scale || 1;
     // Rendu paresseux : on crée seulement des canvas "placeholder" vides
-    // (une hauteur approximative pour garder le scroll cohérent), et on
-    // ne rend réellement une page que lorsqu'elle approche de l'écran.
-    // Cela évite de charger des dizaines/centaines de pages HD en RAM
-    // d'un coup, ce qui faisait planter l'app sur les PDF volumineux.
     pdf.getPage(1).then((firstPage) => {
       const approxViewport = firstPage.getViewport({ scale: 1 });
       const approxRatio = approxViewport.height / approxViewport.width;
       const approxWidth = window.innerWidth - 30;
       const approxHeight = Math.floor(approxWidth * approxRatio);
       // AJOUT: on construit tous les placeholders dans un DocumentFragment
-      // (hors du DOM live) puis on l'insère en une seule fois, au lieu de
-      // faire un appendChild par page. Sur les PDF à centaines de pages, ça
-      // évite un reflow/repaint répété qui ralentissait l'ouverture.
       const fragment = document.createDocumentFragment();
       const canvases = [];
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -1329,8 +1720,6 @@ function fitDocxToScreen(outer, wrapper) {
     const availableWidth = viewer.clientWidth - 10; // petite marge
     const scale = Math.min(1, availableWidth / naturalWidth);
     // "zoom" redimensionne réellement l'élément dans le flux de la page
-    // (contrairement à transform:scale), donc le conteneur autour prend
-    // naturellement la bonne taille, sans calcul manuel de hauteur.
     wrapper.style.zoom = scale;
   });
 }
@@ -1462,9 +1851,6 @@ function processPDFRenderQueue() {
     canvas.setAttribute('data-rendered', '1');
     pdfActiveRenders++;
     // CORRECTION: useBuffer=true (au lieu de false) : la page est dessinée sur
-    // un canvas caché puis copiée d'un coup sur le canvas visible. Sur les gros
-    // PDF, un rendu direct (false) laissait voir le dessin se construire
-    // progressivement à l'écran, ce qui donnait l'effet de saccade visuelle.
     renderPDFPage(currentPdfDoc, pageNum, canvas, true, () => {
       pdfActiveRenders--;
       processPDFRenderQueue();
@@ -1489,6 +1875,24 @@ viewer.addEventListener('scroll', () => {
     processPDFRenderQueue();
   });
 }, { passive: true });
+// CORRECTION: Quand un canvas déjà scrollé au-dessus de l'écran change de
+// hauteur (aperçu rapide ou rendu complet remplaçant la hauteur approximative
+// du placeholder par la vraie hauteur), le navigateur pousse tout le contenu
+// suivant, ce qui décale visuellement le scroll pendant qu'on remonte dans le
+// document. On compense en ajustant scrollTop du même delta pour que rien ne
+// bouge à l'écran.
+function compensateScrollForResize(canvas, oldHeightPx) {
+  const viewerRect = viewer.getBoundingClientRect();
+  const canvasRectBefore = canvas.getBoundingClientRect();
+  // On ne compense que si le canvas est entièrement au-dessus de la zone visible
+  if (canvasRectBefore.bottom > viewerRect.top) return;
+  const newHeightPx = canvas.getBoundingClientRect().height;
+  const diff = newHeightPx - oldHeightPx;
+  if (diff !== 0) {
+    viewer.scrollTop += diff;
+  }
+}
+
 // AJOUT: Aperçu basse résolution instantané. Contrairement au rendu complet
 
 const PDF_QUICK_PREVIEW_WIDTH = 120; // px de large seulement : rendu quasi instantané
@@ -1507,7 +1911,9 @@ function renderPDFPageQuick(pdf, pageNum, canvas) {
     
     const displayWidth = window.innerWidth - 30;
     const correctHeight = Math.floor(displayWidth * (unscaledViewport.height / unscaledViewport.width));
+    const oldHeightPx = canvas.getBoundingClientRect().height;
     canvas.style.height = correctHeight + 'px';
+    compensateScrollForResize(canvas, oldHeightPx);
     const scale = PDF_QUICK_PREVIEW_WIDTH / unscaledViewport.width;
     const viewport = page.getViewport({ scale });
     const ctx = canvas.getContext('2d');
@@ -1528,9 +1934,6 @@ function renderPDFPageQuick(pdf, pageNum, canvas) {
 }
 // CORRECTION 2: Cache viewports pour éviter lag zoom
 function renderPDFPage(pdf, pageNum, targetCanvas, useBuffer = true, onComplete = null) {
-  // AJOUT: annule un éventuel aperçu rapide en cours sur ce canvas avant de
-  // démarrer le rendu complet, pour éviter que les deux dessinent en même
-  // temps sur le même élément.
   if (targetCanvas.__pdfQuickRenderTask) {
     targetCanvas.__pdfQuickRenderTask.cancel();
     targetCanvas.__pdfQuickRenderTask = null;
@@ -1563,8 +1966,10 @@ function renderPDFPage(pdf, pageNum, targetCanvas, useBuffer = true, onComplete 
     renderCanvas.__pdfRenderTask = renderTask;
     renderTask.promise.then(() => {
       renderCanvas.__pdfRenderTask = null;
+      const oldHeightPx = targetCanvas.getBoundingClientRect().height;
       targetCanvas.style.width = Math.floor(viewport.width / currentVisualZoom) + "px";
       targetCanvas.style.height = Math.floor(viewport.height / currentVisualZoom) + "px";
+      compensateScrollForResize(targetCanvas, oldHeightPx);
       if (useBuffer) {
         targetCanvas.width = renderCanvas.width;
         targetCanvas.height = renderCanvas.height;
@@ -1703,10 +2108,6 @@ document.getElementById('scroll-bottom-btn').addEventListener('click', () => {
 });
 
 // ========== AJOUT: Recherche dans le document ==========
-// Fonctionne pour Word (.docx) et Excel (.xlsx), rendus en HTML dans le DOM.
-// Pour les PDF (rendus en <canvas>, sans texte sélectionnable), la recherche
-// n'est pas possible avec le rendu actuel : on prévient l'utilisateur plutôt
-// que de le laisser chercher dans le vide.
 const searchToggleBtn = document.getElementById('search-toggle');
 const searchBar = document.getElementById('search-bar');
 const searchInput = document.getElementById('search-input');
@@ -1814,9 +2215,6 @@ searchNextBtn.addEventListener('click', () => goToMatch(searchMatchIndex + 1));
 searchPrevBtn.addEventListener('click', () => goToMatch(searchMatchIndex - 1));
 
 // ========== AJOUT: Bibliothèque de fichiers locale (IndexedDB) ==========
-// Permet de garder les fichiers importés disponibles d'une session à l'autre
-// (contrairement au <input type="file"> seul, qui oublie tout au rechargement),
-// avec une recherche par nom et un partage direct depuis la liste.
 const LIBRARY_DB_NAME = 'lecteurLibraryDB';
 const LIBRARY_STORE_NAME = 'files';
 let libraryDbPromise = null;
@@ -2467,6 +2865,7 @@ let homeSortDirection = 'desc'; // 'desc' (neuf -> vieux) | 'asc' (vieux -> neuf
 let homeSelectMode = false;
 let homeSelectedIds = new Set();
 let currentHomeRefs = null; // { listEl, bulkCount, bulkShareBtn, bulkDeleteBtn }
+let currentHomeFilterRefs = null; // { filterBtn, filterDropdown, tabDefs, updateHomeFilterButtonLabel }
 
 function fileExtOf(name) {
   return name.split('.').pop().toLowerCase();
@@ -2507,16 +2906,6 @@ function buildLibraryItem(record, { selectable, onOpen, onAfterChange }) {
   const actionsHtml = selectable
     ? ''
     : '<div class="library-item-actions">' +
-           '<button class="library-action-btn favorite' + (record.favorite ? ' active' : '') + '" data-action="favorite" title="' + (record.favorite ? 'Retirer des favoris' : 'Épingler en favori') + '">' +
-'<svg viewBox="0 0 24 24">' +
-'<path d="M12 2l2.9 6.9L22 9.6l-5.5 4.9L18 22l-6-3.6L6 22l1.5-7.5L2 9.6l7.1-.7L12 2z"/>' +
-'</svg>' +
-'</button>' +
-           '<button class="library-action-btn rename" data-action="rename" title="Renommer">' +
-'<svg viewBox="0 0 24 24">' +
-'<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>' +
-'</svg>' +
-'</button>' +
            '<button class="library-action-btn share" data-action="share" title="Partager">' +
 
 '<svg viewBox="0 0 24 24">' +
@@ -2525,10 +2914,10 @@ function buildLibraryItem(record, { selectable, onOpen, onAfterChange }) {
 
 '</button>' +
 
-'<button class="library-action-btn danger" data-action="delete" title="Supprimer">' +
+'<button class="library-action-btn more" data-action="more" title="Plus d\'options">' +
 
 '<svg viewBox="0 0 24 24">' +
-'<path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/>' +
+'<path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 2a2 2 0 100 4 2 2 0 000-4zm0 6a2 2 0 100 4 2 2 0 000-4z"/>' +
 '</svg>' +
 
 '</button>'+
@@ -2587,31 +2976,34 @@ requestAnimationFrame(() => {
     const action = actionBtn.getAttribute('data-action');
     if (action === 'share') {
       shareFile(record);
-    } else if (action === 'favorite') {
-      const next = !record.favorite;
-      await toggleFavoriteInLibrary(record.id, next);
-      onAfterChange && onAfterChange();
-      showToast(next ? 'Ajouté aux favoris.' : 'Retiré des favoris.', 'success');
-    } else if (action === 'rename') {
-      const ext = '.' + record.name.split('.').pop();
-      const baseName = record.name.slice(0, -ext.length);
-      const input = await showPrompt('Nouveau nom du fichier :', baseName, { title: 'Renommer le fichier', okLabel: 'Renommer' });
-      if (input) {
-        await renameFileInLibrary(record.id, input + ext);
+    } else if (action === 'more') {
+      const chosen = await showFileActionsSheet(record);
+      if (chosen === 'favorite') {
+        const next = !record.favorite;
+        await toggleFavoriteInLibrary(record.id, next);
         onAfterChange && onAfterChange();
-        showToast('Fichier renommé.', 'success');
-      }
-    } else if (action === 'delete') {
-      const ok = await showConfirm('Supprimer "' + record.name + '" de la bibliothèque ?', {
-        title: 'Supprimer le fichier',
-        icon: '',
-        okLabel: 'Supprimer',
-        cancelLabel: 'Annuler'
-      });
-      if (ok) {
-        await deleteFileFromLibrary(record.id);
-        onAfterChange && onAfterChange();
-        showToast('Fichier supprimé.', 'success');
+        showToast(next ? 'Ajouté aux favoris.' : 'Retiré des favoris.', 'success');
+      } else if (chosen === 'rename') {
+        const ext = '.' + record.name.split('.').pop();
+        const baseName = record.name.slice(0, -ext.length);
+        const input = await showPrompt('Nouveau nom du fichier :', baseName, { title: 'Renommer le fichier', okLabel: 'Renommer' });
+        if (input) {
+          await renameFileInLibrary(record.id, input + ext);
+          onAfterChange && onAfterChange();
+          showToast('Fichier renommé.', 'success');
+        }
+      } else if (chosen === 'delete') {
+        const ok = await showConfirm('Supprimer "' + record.name + '" de la bibliothèque ?', {
+          title: 'Supprimer le fichier',
+          icon: '',
+          okLabel: 'Supprimer',
+          cancelLabel: 'Annuler'
+        });
+        if (ok) {
+          await deleteFileFromLibrary(record.id);
+          onAfterChange && onAfterChange();
+          showToast('Fichier supprimé.', 'success');
+        }
       }
     }
   });
@@ -2627,6 +3019,10 @@ function updateHomeBulkBar() {
     currentHomeRefs.selectCounter.textContent = n + ' sélectionné(s)';
   }
 }
+
+// AJOUT: icônes du bouton bascule sélection (remplace le texte "Tout sélectionner"/"Tout désélectionner")
+const ICON_CHECK_EMPTY = '<svg viewBox="0 0 24 24"><path d="M19 5v14H5V5h14m0-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/></svg>';
+const ICON_CHECK_ALL = '<svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
 
 // AJOUT: bascule "Tout sélectionner" / "Tout désélectionner" en tenant compte
 // de l'onglet actif et de la recherche en cours (mêmes fichiers que la liste affichée).
@@ -2645,7 +3041,8 @@ async function toggleSelectAllHomeFiles() {
   }
   const btn = currentHomeRefs.selectAllBtn;
   if (btn) {
-    btn.textContent = allSelected ? 'Tout sélectionner' : 'Tout désélectionner';
+    btn.title = allSelected ? 'Tout sélectionner' : 'Tout désélectionner';
+    btn.innerHTML = allSelected ? ICON_CHECK_EMPTY : ICON_CHECK_ALL;
     btn.classList.toggle('active', !allSelected);
   }
   renderHomeFileList();
@@ -2655,19 +3052,39 @@ async function bulkShareSelected() {
   if (homeSelectedIds.size === 0) return;
   const records = await getAllLibraryFiles();
   const selected = records.filter(r => homeSelectedIds.has(r.id));
-  const files = selected.map(r => new File([r.blob], r.name, { type: r.type || 'application/octet-stream' }));
+  if (selected.length === 0) return;
+  // === APK NATIF ANDROID - MULTI FICHIERS D'UN COUP ===
   if (window.Capacitor?.isNativePlatform()) {
-    showToast('Partage natif Capacitor : à implémenter lors de l\'emballage.', 'info');
+    const { ShareSheet } = window.Capacitor.Plugins || {};
+    if (!ShareSheet) return showToast('Plugin ShareSheet manquant', 'error');
+    try {
+      // filePaths = ["External/Download/f1.pdf", "External/Download/f2.pdf"]
+      const filePaths = selected.map(r => r.directory + '/' + r.path);
+      await ShareSheet.share({
+        title: selected.length + ' fichier(s)',
+        text: 'Partagé depuis Lecteur Multi-Formats',
+        files: filePaths  // <- Array = multi direct
+      });
+      showToast(selected.length + ' fichier(s) partagé(s)', 'success');
+    } catch (err) {
+      if (err.message !== 'User cancelled') {
+        showToast('Erreur partage: ' + err.message, 'error');
+      }
+    }
     return;
   }
+  // === WEB CHROME - garde ton multi actuel ===
+  const files = selected.map(r => new File([r.blob], r.name, { type: r.type || 'application/octet-stream' }));
+  
   if (navigator.canShare && navigator.canShare({ files })) {
     try {
       await navigator.share({ files, title: files.length + ' fichiers' });
+      showToast(files.length + ' fichier(s) partagé(s)', 'success');
     } catch (err) {
       if (err.name !== 'AbortError') showToast('Le partage a échoué : ' + err.message, 'error');
     }
   } else {
-    showToast('Le partage groupé de fichiers n\'est pas supporté ici (nécessite HTTPS/localhost + navigateur compatible, ex. Chrome Android).', 'error');
+    showToast('Le partage groupé de fichiers n\'est pas supporté ici', 'error');
   }
 }
 
@@ -2719,6 +3136,15 @@ function renderHomeFileList() {
   if (!currentHomeRefs) return;
   const { listEl } = currentHomeRefs;
   getAllLibraryFiles().then(records => {
+    if (currentHomeFilterRefs) {
+      const { filterDropdown, tabDefs, updateHomeFilterButtonLabel } = currentHomeFilterRefs;
+      tabDefs.forEach(tab => {
+        const count = tab.key === 'all' ? records.length : records.filter(r => fileExtOf(r.name) === tab.key).length;
+        const countEl = filterDropdown.querySelector(`.home-filter-option[data-key="${tab.key}"] .home-filter-option-count`);
+        if (countEl) countEl.textContent = ' (' + count + ')';
+      });
+      updateHomeFilterButtonLabel();
+    }
     let filtered = activeFileTab === 'all' ? records : records.filter(r => fileExtOf(r.name) === activeFileTab);
     const q = homeSearchQuery.trim().toLowerCase();
     if (q) filtered = filtered.filter(r => r.name.toLowerCase().includes(q));
@@ -2746,8 +3172,6 @@ function renderHomeFileList() {
 }
 
 // AJOUT: renderHomeScreen construit l'interface complete (onglets + recherche
-// + bouton "Selectionner" + barre d'actions groupees + liste), affichee
-// directement dans le viewer au demarrage et via le bouton 🏠.
 function renderHomeScreen() {
   resetViewerState();
   excelTabs.innerHTML = '';
@@ -2757,10 +3181,11 @@ function renderHomeScreen() {
   homeSelectedIds.clear();
   isDocumentOpen = false;
   updateBackFabVisibility();
+  updateTopBarButtons();
   const container = document.createElement('div');
   container.className = 'home-screen';
 
-  // Onglets de filtre par type
+  // Menu déroulant de filtre par type (empilé : Tous/PDF/Word/Excel)
   const tabsRow = document.createElement('div');
   tabsRow.className = 'home-tabs-row';
   const tabDefs = [
@@ -2769,19 +3194,56 @@ function renderHomeScreen() {
     { key: 'docx', label: 'Word' },
     { key: 'xlsx', label: 'Excel' }
   ];
+
+  const filterBtn = document.createElement('div');
+  filterBtn.className = 'home-filter-btn';
+  filterBtn.innerHTML = `<span class="home-filter-label"></span> <span class="home-filter-count"></span><button type="button" class="home-filter-arrow">▾</button>`;
+
+  const filterDropdown = document.createElement('div');
+  filterDropdown.className = 'home-filter-dropdown';
   tabDefs.forEach(tab => {
-    const btn = document.createElement('button');
-    btn.className = 'home-tab-btn' + (activeFileTab === tab.key ? ' active' : '');
-    btn.textContent = tab.label;
-    btn.addEventListener('click', () => {
+    const option = document.createElement('label');
+    option.className = 'home-filter-option';
+    option.dataset.key = tab.key;
+    option.innerHTML = `
+<span><span class="home-filter-option-label">${tab.label}</span><span class="home-filter-option-count"></span></span>
+<input type="radio" name="homeFilterTab" value="${tab.key}"${activeFileTab === tab.key ? ' checked' : ''}>
+`;
+    option.addEventListener('click', () => {
       activeFileTab = tab.key;
-      tabsRow.querySelectorAll('.home-tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+      filterDropdown.querySelectorAll('input[name="homeFilterTab"]').forEach(r => { r.checked = (r.value === tab.key); });
+      filterDropdown.classList.remove('active');
+      filterBtn.classList.remove('open');
+      updateHomeFilterButtonLabel();
       renderHomeFileList();
     });
-    tabsRow.appendChild(btn);
+    filterDropdown.appendChild(option);
   });
-  container.appendChild(tabsRow);
+
+  const filterArrowBtn = filterBtn.querySelector('.home-filter-arrow');
+  filterArrowBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = !filterDropdown.classList.contains('active');
+    if (willOpen) {
+      const rect = filterBtn.getBoundingClientRect();
+      filterDropdown.style.top = (rect.bottom + 6) + 'px';
+      filterDropdown.style.left = rect.left + 'px';
+    }
+    filterDropdown.classList.toggle('active', willOpen);
+    filterBtn.classList.toggle('open', willOpen);
+  });
+
+  function updateHomeFilterButtonLabel() {
+    const tab = tabDefs.find(t => t.key === activeFileTab) || tabDefs[0];
+    filterBtn.querySelector('.home-filter-label').textContent = tab.label.toUpperCase();
+    const optionCount = filterDropdown.querySelector(`.home-filter-option[data-key="${tab.key}"] .home-filter-option-count`);
+    filterBtn.querySelector('.home-filter-count').textContent = optionCount ? optionCount.textContent : '';
+  }
+
+  tabsRow.appendChild(filterBtn);
+  tabsRow.appendChild(filterDropdown);
+  currentHomeFilterRefs = { filterBtn, filterDropdown, tabDefs, updateHomeFilterButtonLabel };
+  updateHomeFilterButtonLabel();
 
   // Barre recherche + bouton Sélectionner
   const toolsRow = document.createElement('div');
@@ -2816,7 +3278,8 @@ function renderHomeScreen() {
 
   const selectAllBtn = document.createElement('button');
   selectAllBtn.className = 'library-select-all-toggle';
-  selectAllBtn.textContent = 'Tout sélectionner';
+  selectAllBtn.title = 'Tout sélectionner';
+  selectAllBtn.innerHTML = ICON_CHECK_EMPTY;
   selectAllBtn.style.display = 'none';
   selectAllBtn.addEventListener('click', toggleSelectAllHomeFiles);
 
@@ -2832,6 +3295,7 @@ function renderHomeScreen() {
   toolsRow.appendChild(selectAllBtn);
   toolsRow.appendChild(selectToggleBtn);
   container.appendChild(toolsRow);
+  container.appendChild(tabsRow);
 
   // Barre d'actions groupées (masquée tant que le mode sélection n'est pas actif)
   const bulkBar = document.createElement('div');
@@ -2870,10 +3334,13 @@ container.appendChild(bulkBar);
     selectToggleBtn.classList.toggle('active', homeSelectMode);
     bulkBar.classList.toggle('active', homeSelectMode);
     toolsRow.classList.toggle('select-mode', homeSelectMode);
+    tabsRow.style.display = homeSelectMode ? 'none' : '';
+    updateTopBarButtons();
     selectCounter.style.display = homeSelectMode ? 'inline' : 'none';
-    selectAllBtn.style.display = homeSelectMode ? 'inline-block' : 'none';
+    selectAllBtn.style.display = homeSelectMode ? 'flex' : 'none';
     selectAllBtn.classList.remove('active');
-    selectAllBtn.textContent = 'Tout sélectionner';
+    selectAllBtn.title = 'Tout sélectionner';
+    selectAllBtn.innerHTML = ICON_CHECK_EMPTY;
     renderHomeFileList();
   });
   bulkShareBtn.addEventListener('click', bulkShareSelected);
@@ -2887,6 +3354,7 @@ container.appendChild(bulkBar);
   viewer.innerHTML = '';
   viewer.appendChild(container);
   currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
+  renderHomeFileList();
   }
 function goHome() {
   renderHomeScreen();
@@ -2896,6 +3364,15 @@ function goHome() {
 // On l'active/désactive à chaque fois qu'on ouvre un document ou qu'on revient à l'accueil.
 function updateBackFabVisibility() {
   backHomeBtn.classList.toggle('active', isDocumentOpen);
+}
+
+// AJOUT: en lecture de fichier, le bouton "recherche dans le document" prend
+// la place du bouton menu (⋮) ; sur l'écran d'accueil c'est l'inverse, et en
+// mode sélection le bouton menu (⋮) est également masqué.
+function updateTopBarButtons() {
+  const menuWrap = document.getElementById('menu-wrap');
+  searchToggleBtn.classList.toggle('top-btn-hidden', !isDocumentOpen);
+  menuWrap.classList.toggle('top-btn-hidden', isDocumentOpen || homeSelectMode);
 }
 
 backHomeBtn.addEventListener('click', () => {
@@ -2911,6 +3388,15 @@ menuToggleBtn.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => {
   if (!overflowMenu.contains(e.target) && e.target !== menuToggleBtn) {
     overflowMenu.classList.remove('active');
+  }
+});
+// AJOUT: ferme le menu déroulant de filtre (Tous/PDF/Word/Excel) au clic extérieur
+document.addEventListener('click', (e) => {
+  if (!currentHomeFilterRefs) return;
+  const { filterBtn, filterDropdown } = currentHomeFilterRefs;
+  if (!filterBtn.contains(e.target) && !filterDropdown.contains(e.target)) {
+    filterDropdown.classList.remove('active');
+    filterBtn.classList.remove('open');
   }
 });
 overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', () => {
@@ -2944,6 +3430,396 @@ requestNotificationPermissionOnStartup().finally(() => {
       console.warn('Scan natif au demarrage : echec', err)
   );
 });
+
+// ===== AJOUT: Mini-jeu Snake (écran dédié, indépendant du lecteur) =====
+(function () {
+  const gameScreen = document.getElementById('game-screen');
+  const pauseBtn = document.getElementById('game-pause-btn');
+  const dpadPauseZone = document.getElementById('game-dpad-pause-zone');
+ const pauseHint = document.getElementById('pause-hint');
+const pauseHintClose = document.getElementById('pause-hint-close');
+ const openGameBtn = document.getElementById('open-game-btn');
+  const gameBackBtn = document.getElementById('game-back-btn');
+  const canvas = document.getElementById('game-canvas');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('game-overlay');
+  const overlayTitle = document.getElementById('game-overlay-title');
+  const overlaySub = document.getElementById('game-overlay-sub');
+  const startBtn = document.getElementById('game-start-btn');
+  const scoreVal = document.getElementById('game-score-val');
+
+  const COLS = 18, ROWS = 18;
+  let cellSize = 16;
+  let snake, dir, nextDir, food, score, best, loopId, running;
+  let gameState = 'idle';
+  let resumeCountdownId = null;
+let pauseHintClosed = localStorage.getItem('snake_pause_hint_closed') === 'true';
+  const directionQueue = [];
+
+  best = parseInt(localStorage.getItem('lecteurapp_snake_best') || '0', 10) || 0;
+
+  function resizeCanvas() {
+    const wrap = canvas.parentElement;
+    const available = Math.min(wrap.clientWidth - 24, wrap.clientHeight - 24, 420);
+    cellSize = Math.floor(available / COLS);
+    const size = cellSize * COLS;
+    canvas.width = size;
+    canvas.height = size;
+    draw();
+  }
+
+  function resetGame() {
+    snake = [{ x: 8, y: 9 }, { x: 7, y: 9 }, { x: 6, y: 9 }];
+    dir = { x: 1, y: 0 };
+    nextDir = { x: 1, y: 0 };
+    score = 0;
+    scoreVal.textContent = '0';
+    placeFood();
+  }
+
+  function placeFood() {
+    let pos;
+    do {
+      pos = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+    } while (snake.some(s => s.x === pos.x && s.y === pos.y));
+    food = pos;
+  }
+
+  function draw() {
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!snake) return;
+
+    // Nourriture
+    ctx.fillStyle = '#ff5e5e';
+    ctx.beginPath();
+    ctx.arc(
+      food.x * cellSize + cellSize / 2,
+      food.y * cellSize + cellSize / 2,
+      cellSize / 2.4, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    // Serpent
+    snake.forEach((seg, i) => {
+      ctx.fillStyle = i === 0 ? '#00e5c0' : '#00adb5';
+      const pad = 1.5;
+      const x = seg.x * cellSize + pad, y = seg.y * cellSize + pad;
+      const w = cellSize - pad * 2, h = cellSize - pad * 2;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, 4);
+        ctx.fill();
+      } else {
+        ctx.fillRect(x, y, w, h); // Repli pour WebView sans roundRect()
+      }
+    });
+  }
+
+  function tick() {
+    if (directionQueue.length) {
+        nextDir = directionQueue.shift();
+    }
+    dir = nextDir;
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    // Collision murs / soi-même
+    if (
+      head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+      snake.some(s => s.x === head.x && s.y === head.y)
+    ) {
+      gameOver();
+      return;
+    }
+    snake.unshift(head);
+    if (head.x === food.x && head.y === food.y) {
+      score += 10;
+      scoreVal.textContent = String(score);
+      placeFood();
+    } else {
+      snake.pop();
+    }
+    draw();
+}
+
+  function startLoop() {
+    stopLoop();
+    loopId = setInterval(tick, 130);
+    running = true;
+  }
+  
+  function stopLoop() {
+    if (loopId) clearInterval(loopId);
+    loopId = null;
+    running = false;
+  }
+
+function pauseGame() {
+  if (gameState !== 'playing') return;
+
+  stopLoop();
+
+  gameState = 'paused';
+
+  pauseBtn.textContent = '▶';
+
+  overlayTitle.textContent = 'Pause';
+  overlaySub.textContent = 'Appuyez sur reprendre pour continuer.';
+  startBtn.textContent = 'Reprendre';
+
+  overlay.classList.remove('hidden');
+}
+
+
+function resumeGame() {
+  if (gameState !== 'paused') return;
+  gameState = 'countdown';
+  pauseBtn.textContent = '⏸';
+  let count = 3;
+  overlayTitle.textContent = count;
+  overlaySub.textContent = 'Préparez-vous...';
+  overlay.classList.remove('hidden');
+  resumeCountdownId = setInterval(() => {
+    count--;
+    if (count > 0) {
+      overlayTitle.textContent = count;
+      return;
+    }
+    clearInterval(resumeCountdownId);
+    resumeCountdownId = null;
+    overlayTitle.textContent = 'GO !';
+    setTimeout(() => {
+      overlay.classList.add('hidden');
+      gameState = 'playing';
+      startLoop();
+    }, 500);
+  }, 1000);
+}
+
+  function gameOver() {
+    stopLoop();
+    gameState = 'gameover';
+    if (score > best) {
+      best = score;
+      localStorage.setItem('lecteurapp_snake_best', String(best));
+    }
+    overlayTitle.textContent = 'Perdu !';
+    overlaySub.textContent = `Score : ${score} — Meilleur score : ${best}`;
+    startBtn.textContent = 'Rejouer';
+    overlay.classList.remove('hidden');
+  }
+
+  function startGame() {
+  if (!pauseHintClosed) return;
+  if (gameState === 'paused') {
+    resumeGame();
+    return;
+  }
+  if (gameState === 'playing') {
+  return;
+}
+
+if (gameState === 'countdown') {
+  return;
+}
+  overlay.classList.add('hidden');
+  resetGame();
+  resizeCanvas();
+  directionQueue.length = 0;
+  gameState = 'playing';
+  pauseBtn.textContent = '⏸';
+  startLoop();
+}
+
+  function setDirection(next) {
+  if (gameState !== 'playing') return;
+    const last =
+        directionQueue.length
+            ? directionQueue[directionQueue.length - 1]
+            : nextDir;
+    // Empêche le demi-tour
+    if (last.x + next.x === 0 && last.y + next.y === 0)
+        return;
+    // Évite les doublons
+    if (last.x === next.x && last.y === next.y)
+        return;
+    // Garde seulement deux directions d'avance
+    if (directionQueue.length < 2)
+        directionQueue.push(next);
+}
+
+  const DIRS = {
+    up: { x: 0, y: -1 },
+    down: { x: 0, y: 1 },
+    left: { x: -1, y: 0 },
+    right: { x: 1, y: 0 }
+  };
+
+  document.querySelectorAll('.game-dpad-btn').forEach(btn => {
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    setDirection(DIRS[btn.dataset.dir]);
+  }, { passive: false });
+});
+
+  // Contrôle au clavier (utile si un clavier physique est présent)
+  document.addEventListener('keydown', (e) => {
+    if (!gameScreen.classList.contains('active')) return;
+    if (e.key === 'ArrowUp') setDirection(DIRS.up);
+    else if (e.key === 'ArrowDown') setDirection(DIRS.down);
+    else if (e.key === 'ArrowLeft') setDirection(DIRS.left);
+    else if (e.key === 'ArrowRight') setDirection(DIRS.right);
+  });
+
+  // Contrôle tactile (glissement sur le canevas)
+  let touchStart = null;
+  canvas.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches[0];
+    touchStart = { x: t.clientX, y: t.clientY };
+  }, { passive: true });
+  canvas.addEventListener('touchend', (e) => {
+    if (!touchStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) { touchStart = null; return; }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      setDirection(dx > 0 ? DIRS.right : DIRS.left);
+    } else {
+      setDirection(dy > 0 ? DIRS.down : DIRS.up);
+    }
+    touchStart = null;
+  }, { passive: true });
+
+  startBtn.addEventListener('click', startGame);
+pauseHintClose.addEventListener('click', () => {
+  pauseHintClosed = true;
+  pauseHint.style.display = 'none';
+  localStorage.setItem('snake_pause_hint_closed', 'true');
+});
+ dpadPauseZone.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (gameState === 'playing') {
+    pauseGame();
+  }
+  else if (gameState === 'paused') {
+    resumeGame();
+  }
+}, { passive:false });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // Si un compte à rebours de reprise est en cours
+    if (resumeCountdownId) {
+      clearInterval(resumeCountdownId);
+      resumeCountdownId = null;
+    }
+    // Si le Snake joue réellement
+    if (gameState === 'playing') {
+      pauseGame();
+    }
+  }
+});
+  window.addEventListener('resize', () => {
+    if (gameScreen.classList.contains('active')) resizeCanvas();
+  });
+
+  function openGame() {
+    overflowMenu.classList.remove('active');
+    gameScreen.classList.add('active');
+    overlayTitle.textContent = 'Snake';
+    overlaySub.textContent = `Glissez ou utilisez les flèches pour diriger le serpent. Meilleur score : ${best}`;
+    startBtn.textContent = 'Jouer';
+    overlay.classList.remove('hidden');
+    stopLoop();
+    resetGame();
+    resizeCanvas();
+    if (pauseHintClosed) {
+  pauseHint.style.display = 'none';
+} else {
+  pauseHint.style.display = 'block';
+}
+  }
+
+  function closeGame() {
+    stopLoop();
+    gameScreen.classList.remove('active');
+  }
+
+  openGameBtn.addEventListener('click', openGame);
+  gameBackBtn.addEventListener('click', closeGame);
+})();
 </script>
+
+<script src="capacitor.js"></script>
+
+<script>
+  // Détection du mode d'exécution
+  const estEnModeNatif = typeof Capacitor !== 'undefined';
+
+  // Sauvegarde de ta fonction de partage d'origine si besoin
+  const partageWebOriginal = navigator.share;
+
+  // Réécriture propre de navigator.share pour le mode Natif (Sans toucher au reste de ton code)
+  if (estEnModeNatif) {
+    navigator.share = async function (donneesPartage) {
+      try {
+        const { Share, Filesystem, Directory } = Capacitor.Plugins;
+
+        // Cas 1 : Tu partages uniquement du texte ou un lien
+        if (!donneesPartage.files || donneesPartage.files.length === 0) {
+          await Share.share({
+            title: donneesPartage.title || "Partage",
+            text: donneesPartage.text || "",
+            url: donneesPartage.url || ""
+          });
+          return;
+        }
+
+        // Cas 2 : Partage multiple (ton système Sharesheet de documents/sous-dossiers)
+        let urisFichiersNatifs = [];
+
+        for (let fichierWeb of donneesPartage.files) {
+          // 1. Convertir le fichier web (Blob/File) en Base64 pour l'écrire physiquement
+          const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
+          
+          // 2. Écrire temporairement le fichier dans le stockage pour qu'Android puisse le voir
+          const fichierEcrit = await Filesystem.writeFile({
+            path: `Documents/PartageTmp_${fichierWeb.name}`,
+            data: donneesBase64,
+            directory: Directory.Documents
+          });
+
+          urisFichiersNatifs.push(fichierEcrit.uri);
+        }
+
+        // 3. Ouvrir la Sharesheet Android officielle avec tous les fichiers préservés
+        await Share.share({
+          title: donneesPartage.title || "Partage de documents",
+          files: urisFichiersNatifs // Tableau contenant tous les liens physiques natifs
+        });
+
+      } catch (erreur) {
+        console.error("Échec du partage Sharesheet Natif :", erreur);
+        // En cas de problème, affichage via ton système de Toast personnalisé
+        if (typeof showToast === "function") {
+          showToast("Erreur lors du partage natif", "error");
+        }
+      }
+    };
+  }
+
+  // Fonction utilitaire pour transformer tes fichiers Web en flux de données
+  function convertirFichierEnBase64(fichier) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const chaineBase64 = reader.result.split(',')[1];
+        resolve(chaineBase64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(fichier);
+    });
+  }
+</script>
+
 </body>
 </html>
