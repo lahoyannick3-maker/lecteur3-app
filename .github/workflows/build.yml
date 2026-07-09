@@ -1,29 +1,58 @@
-name: Build APK
+name: Build Application Native Android Complete
+
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, master ] # Se déclenche à chaque push
 
 jobs:
-  build:
+  android-build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: npx cap add android
-      - run: npx cap sync android
-      - name: Add permissions
-        run: |
-          sed -i '/<manifest /a\
-          <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\
-          <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\
-          <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
-      - name: Build APK
-        run: cd android && ./gradlew assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+    - name: Récupération du code source
+      uses: actions/checkout@v4
+
+    - name: Configuration de Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Configuration de Java JDK 17 (Requis pour compiler Android)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Installation des dépendances
+      run: npm install
+
+    - name: Initialisation de l'environnement Android Capacitor
+      run: |
+        npx cap init "Mon Lecteur" "com.monlecteur.app" --web-dir=www
+        npx cap add android
+
+    - name: Injection forcée des permissions de scan global et notifications
+      run: |
+        MANIFEST="android/app/src/main/AndroidManifest.xml"
+        # Ajout des autorisations absolues pour scanner les dossiers, sous-dossiers et notifier l'utilisateur
+        sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>' $MANIFEST
+        sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>' $MANIFEST
+        sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" \/>' $MANIFEST
+        sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>' $MANIFEST
+
+    - name: Synchronisation finale des scripts (libs) et du code web
+      run: npx cap sync android
+
+    - name: Autorisation d'exécution Gradle
+      run: chmod +x android/gradlew
+
+    - name: Compilation de l'APK Natif
+      run: |
+        cd android
+        ./gradlew assembleDebug
+
+    - name: Téléchargement de ton fichier APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: MonApp-Native-Complete
+        path: android/app/build/outputs/apk/debug/app-debug.apk
