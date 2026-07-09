@@ -2460,8 +2460,8 @@ function blobToBase64(blob) {
 async function shareFile(record) {
   const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
   if (window.Capacitor?.isNativePlatform()) {
-    const { Filesystem, Directory, Share } = window.Capacitor.Plugins || {};
-    if (!Filesystem || !Directory || !Share) {
+    const { Filesystem, Share } = window.Capacitor.Plugins || {};
+    if (!Filesystem || !Share) {
       showToast('Plugins Filesystem/Share manquants.', 'error');
       return;
     }
@@ -2622,8 +2622,8 @@ async function fullScan() {
     return [];
   }
 
-  const { Filesystem, Directory } = window.Capacitor.Plugins || {};
-  if (!Filesystem || !Directory) {
+  const { Filesystem } = window.Capacitor.Plugins || {};
+  if (!Filesystem) {
     showToast("Plugin Filesystem manquant.", "error");
     return [];
   }
@@ -2736,8 +2736,8 @@ async function startAutoScan() {
 async function incrementalScan() {
     if (!window.Capacitor?.isNativePlatform()) return [];
 
-    const { Filesystem, Directory } = window.Capacitor.Plugins || {};
-    if (!Filesystem || !Directory) return [];
+    const { Filesystem } = window.Capacitor.Plugins || {};
+    if (!Filesystem) return [];
 
     const index = await getLibraryIndex();
 
@@ -3055,12 +3055,12 @@ async function bulkShareSelected() {
   if (selected.length === 0) return;
   // === APK NATIF ANDROID - MULTI FICHIERS D'UN COUP ===
   if (window.Capacitor?.isNativePlatform()) {
-    const { ShareSheet } = window.Capacitor.Plugins || {};
-    if (!ShareSheet) return showToast('Plugin ShareSheet manquant', 'error');
+    const { Share } = window.Capacitor.Plugins || {};
+    if (!Share) return showToast('Plugin Share manquant', 'error');
     try {
       // filePaths = ["External/Download/f1.pdf", "External/Download/f2.pdf"]
       const filePaths = selected.map(r => r.directory + '/' + r.path);
-      await ShareSheet.share({
+      await Share.share({
         title: selected.length + ' fichier(s)',
         text: 'Partagé depuis Lecteur Multi-Formats',
         files: filePaths  // <- Array = multi direct
@@ -3752,6 +3752,21 @@ document.addEventListener('visibilitychange', () => {
 <script src="capacitor.js"></script>
 
 <script>
+  // "Directory" n'est pas un plugin natif : c'est juste une table de constantes
+  // fournie par le package npm @capacitor/filesystem. Elle n'existe jamais dans
+  // window.Capacitor.Plugins, donc on la redéfinit ici manuellement.
+  window.Directory = {
+    Documents: 'DOCUMENTS',
+    Data: 'DATA',
+    Library: 'LIBRARY',
+    Cache: 'CACHE',
+    External: 'EXTERNAL',
+    ExternalStorage: 'EXTERNAL_STORAGE',
+    ExternalCache: 'EXTERNAL_CACHE'
+  };
+</script>
+
+<script>
   // Détection du mode d'exécution
   const estEnModeNatif = typeof Capacitor !== 'undefined';
 
@@ -3762,7 +3777,7 @@ document.addEventListener('visibilitychange', () => {
   if (estEnModeNatif) {
     navigator.share = async function (donneesPartage) {
       try {
-        const { Share, Filesystem, Directory } = Capacitor.Plugins;
+        const { Share, Filesystem } = Capacitor.Plugins;
 
         // Cas 1 : Tu partages uniquement du texte ou un lien
         if (!donneesPartage.files || donneesPartage.files.length === 0) {
