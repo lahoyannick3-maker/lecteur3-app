@@ -5,6 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
+<script>
+  // ========== DIAGNOSTIC DE PLANTAGE ==========
+  // Capture toute erreur JS ou promesse rejetée non gérée, et la sauvegarde
+  // dans localStorage (survit même si l'app plante juste après). Permet de
+  // consulter la cause d'un crash sans passer par les logs Android natifs
+  // (utile quand "Voir les détails du plantage" n'existe pas sur le téléphone).
+  window.addEventListener('error', function (e) {
+    try {
+      localStorage.setItem('lastCrashLog', JSON.stringify({
+        type: 'error',
+        message: e.message,
+        filename: e.filename,
+        lineno: e.lineno,
+        colno: e.colno,
+        stack: e.error && e.error.stack,
+        time: new Date().toISOString()
+      }));
+    } catch (_) {}
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    try {
+      localStorage.setItem('lastCrashLog', JSON.stringify({
+        type: 'unhandledrejection',
+        message: (e.reason && e.reason.message) || String(e.reason),
+        stack: e.reason && e.reason.stack,
+        time: new Date().toISOString()
+      }));
+    } catch (_) {}
+  });
+
+  // Coupe-circuit anti-boucle de plantage : on marque le lancement comme
+  // "démarré" tout de suite, et comme "terminé" seulement une fois l'écran
+  // d'accueil affiché avec succès. Si au lancement suivant on retrouve l'état
+  // "démarré" (jamais passé à "terminé"), c'est que l'app a planté avant la
+  // fin du démarrage précédent : on saute alors le scan automatique (suspect
+  // principal) pour casser la boucle et laisser l'utilisateur rouvrir l'app.
+  window.SKIP_AUTOSCAN_THIS_LAUNCH = false;
+  try {
+    const prevLaunchState = localStorage.getItem('appLaunchState');
+    if (prevLaunchState === 'started') {
+      window.SKIP_AUTOSCAN_THIS_LAUNCH = true;
+    }
+    localStorage.setItem('appLaunchState', 'started');
+  } catch (_) {}
+</script>
 <!-- Libs locales pour mode hors ligne -->
 <script src="jszip.min.js"></script>
 <script src="docx-preview.min.js"></script>
@@ -1258,6 +1303,7 @@ canvas {
     <div class="overflow-menu" id="overflow-menu">
       <label for="file-input">Ouvrir un fichier</label>
       <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
+      <button type="button" id="show-crash-log-btn">🐞 Journal d'erreur</button>
     </div>
   </div>
   <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
@@ -3394,8 +3440,38 @@ overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', 
   overflowMenu.classList.remove('active');
 });
 
+document.getElementById('show-crash-log-btn').addEventListener('click', () => {
+  overflowMenu.classList.remove('active');
+  let text = "Aucun journal de plantage enregistré pour l'instant.";
+  if (window.LAST_CRASH_LOG) {
+    const l = window.LAST_CRASH_LOG;
+    text = `[${l.time}]\n${l.type} : ${l.message}\n${l.filename ? 'Fichier: ' + l.filename + ':' + l.lineno + ':' + l.colno + '\n' : ''}${l.stack ? '\n' + l.stack : ''}`;
+  }
+  showConfirm(text, { title: "Journal d'erreur", icon: '🐞', okLabel: 'OK', cancelLabel: 'Fermer' });
+});
+
 // Affiche l'écran d'accueil dès le chargement de l'app.
 renderHomeScreen();
+
+// Le démarrage a atteint ce point sans planter : on marque le lancement
+// comme "terminé" pour que le coupe-circuit anti-boucle (voir tout début du
+// fichier) ne se déclenche pas au prochain lancement.
+try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
+
+// S'il existe un journal de plantage du lancement précédent, on l'affiche
+// une fois puis on l'efface, pour pouvoir diagnostiquer sans logs Android natifs.
+(function showLastCrashLogIfAny() {
+  try {
+    const raw = localStorage.getItem('lastCrashLog');
+    if (raw) {
+      localStorage.removeItem('lastCrashLog');
+      const log = JSON.parse(raw);
+      console.warn('Dernier plantage détecté :', log);
+      showToast('Un plantage précédent a été détecté. Ouvre le menu (⋮) → "Journal d\'erreur" pour le voir.', 'error');
+      window.LAST_CRASH_LOG = log;
+    }
+  } catch (_) {}
+})();
 
 // Demande la permission de notification dès l'ouverture de l'app (plutôt
 // que d'attendre le premier fichier trouvé), pour ne pas rater la toute
@@ -3447,6 +3523,14 @@ async function requestStoragePermissionOnStartup() {
 requestNotificationPermissionOnStartup()
   .then(() => requestStoragePermissionOnStartup())
   .finally(() => {
+    if (window.SKIP_AUTOSCAN_THIS_LAUNCH) {
+      // Le lancement précédent n'est jamais arrivé jusqu'à "terminé" (probable
+      // plantage) : on saute le scan automatique cette fois pour ne pas
+      // reboucler sur le même plantage, et on prévient l'utilisateur.
+      console.warn('Scan automatique sauté : le lancement précédent semble avoir planté.');
+      showToast("Scan automatique désactivé temporairement (plantage détecté au dernier lancement). Relance l'app pour réessayer.", 'info');
+      return;
+    }
     startAutoScan().catch(err =>
         console.warn('Scan natif au demarrage : echec', err)
     );
