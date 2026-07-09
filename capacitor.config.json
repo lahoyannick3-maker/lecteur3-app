@@ -1,8 +1,6 @@
 {
-  "appId": "com.yannick.lecteurapp",
-  "appName": "Lecteur Multi-Formats",
+  "appId": "com.monlecteur.app",
+  "appName": "Mon Lecteur",
   "webDir": "www",
-  "android": {
-    "allowMixedContent": true
-  }
+  "bundledWebRuntime": false
 }
