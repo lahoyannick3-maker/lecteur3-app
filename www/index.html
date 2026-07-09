@@ -3053,30 +3053,17 @@ async function bulkShareSelected() {
   const records = await getAllLibraryFiles();
   const selected = records.filter(r => homeSelectedIds.has(r.id));
   if (selected.length === 0) return;
-  // === APK NATIF ANDROID - MULTI FICHIERS D'UN COUP ===
-  if (window.Capacitor?.isNativePlatform()) {
-    const { Share } = window.Capacitor.Plugins || {};
-    if (!Share) return showToast('Plugin Share manquant', 'error');
-    try {
-      // filePaths = ["External/Download/f1.pdf", "External/Download/f2.pdf"]
-      const filePaths = selected.map(r => r.directory + '/' + r.path);
-      await Share.share({
-        title: selected.length + ' fichier(s)',
-        text: 'Partagé depuis Lecteur Multi-Formats',
-        files: filePaths  // <- Array = multi direct
-      });
-      showToast(selected.length + ' fichier(s) partagé(s)', 'success');
-    } catch (err) {
-      if (err.message !== 'User cancelled') {
-        showToast('Erreur partage: ' + err.message, 'error');
-      }
-    }
-    return;
-  }
-  // === WEB CHROME - garde ton multi actuel ===
+  // NOTE: on ne fait plus de branche native "maison" ici : navigator.share est
+  // déjà réécrit plus bas dans le fichier pour le mode Capacitor natif et gère
+  // correctement le multi-fichiers (écriture + récupération de vraies URIs file://).
   const files = selected.map(r => new File([r.blob], r.name, { type: r.type || 'application/octet-stream' }));
-  
-  if (navigator.canShare && navigator.canShare({ files })) {
+
+  // En APK natif, navigator.share est réécrit plus bas dans le fichier et gère
+  // le multi-fichiers lui-même : on l'appelle directement sans passer par
+  // navigator.canShare, qui n'existe pas (ou répond mal) dans la WebView Android.
+  const canUseNativeShare = window.Capacitor?.isNativePlatform() || (navigator.canShare && navigator.canShare({ files }));
+
+  if (canUseNativeShare) {
     try {
       await navigator.share({ files, title: files.length + ' fichiers' });
       showToast(files.length + ' fichier(s) partagé(s)', 'success');
@@ -3425,11 +3412,41 @@ async function requestNotificationPermissionOnStartup() {
   }
 }
 
-requestNotificationPermissionOnStartup().finally(() => {
-  startAutoScan().catch(err =>
-      console.warn('Scan natif au demarrage : echec', err)
-  );
-});
+// Demande la permission de lecture du stockage. Sans ça, Filesystem.readdir()
+// échoue silencieusement (attrapé par le try/catch de listNativeFilesRecursive)
+// et le scan ne trouve jamais aucun fichier, sans aucune erreur visible.
+async function requestStoragePermissionOnStartup() {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  const { Filesystem } = window.Capacitor.Plugins || {};
+  if (!Filesystem) return;
+
+  try {
+    const status = await Filesystem.checkPermissions();
+    if (status.publicStorage !== 'granted') {
+      const req = await Filesystem.requestPermissions();
+      if (req.publicStorage !== 'granted') {
+        // Android 11+ : ce plugin ne peut demander que le "runtime permission"
+        // classique. La permission spéciale "Accès à tous les fichiers"
+        // (MANAGE_EXTERNAL_STORAGE) doit être activée à la main par
+        // l'utilisateur : Paramètres > Applications > Mon Lecteur >
+        // Autorisations > Fichiers et contenus multimédias > Autoriser la
+        // gestion de tous les fichiers.
+        showToast("Autorise l'accès au stockage dans les paramètres de l'app pour que le scan automatique fonctionne.", 'info');
+      }
+    }
+  } catch (err) {
+    console.warn("Demande de permission stockage échouée :", err);
+  }
+}
+
+requestNotificationPermissionOnStartup()
+  .then(() => requestStoragePermissionOnStartup())
+  .finally(() => {
+    startAutoScan().catch(err =>
+        console.warn('Scan natif au demarrage : echec', err)
+    );
+  });
 
 // ===== AJOUT: Mini-jeu Snake (écran dédié, indépendant du lecteur) =====
 (function () {
