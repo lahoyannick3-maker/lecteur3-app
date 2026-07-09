@@ -6,10 +6,10 @@
 <meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <!-- Libs locales pour mode hors ligne -->
-<script src="libs/jszip.min.js"></script>
-<script src="libs/docx-preview.min.js"></script>
-<script src="libs/pdf.min.js"></script>
-<script src="libs/xlsx.full.min.js"></script>
+<script src="jszip.min.js"></script>
+<script src="docx-preview.min.js"></script>
+<script src="pdf.min.js"></script>
+<script src="xlsx.full.min.js"></script>
 <style>
 :root { color-scheme: light; }
 body {
@@ -1512,7 +1512,7 @@ function showPrompt(message, defaultValue = '', options = {}) {
 }
 
 // Worker local pour PDF
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 const fileInput = document.getElementById('file-input');
 const viewer = document.getElementById('viewer');
 const docTitle = document.getElementById('doc-title');
