@@ -2575,14 +2575,15 @@ function mimeForExt(ext) {
 }
 
 // Convertit une chaine base64 (retournee par Filesystem.readFile) en Blob/File.
-function base64ToFile(base64Data, name, mimeType) {
-  const byteChars = atob(base64Data);
-  const byteNumbers = new Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) {
-    byteNumbers[i] = byteChars.charCodeAt(i);
-  }
-  const byteArray = new Uint8Array(byteNumbers);
-  return new File([byteArray], name, { type: mimeType });
+// Utilise fetch() sur une data URL plutôt qu'une boucle JS manuelle
+// (atob + tableau d'octets un par un) : le décodage se fait alors nativement
+// côté navigateur (C++) au lieu de créer un énorme tableau JS temporaire en
+// mémoire pour chaque fichier - ce qui pouvait faire planter le WebView lors
+// du scan de plusieurs fichiers de quelques Mo chacun.
+async function base64ToFile(base64Data, name, mimeType) {
+  const res = await fetch(`data:${mimeType};base64,${base64Data}`);
+  const blob = await res.blob();
+  return new File([blob], name, { type: mimeType });
 }
 
 // Parcourt recursivement un dossier natif via le plugin Filesystem et
@@ -2719,7 +2720,7 @@ async function fullScan() {
         directory: Directory[directory]
       });
 
-      const file = base64ToFile(
+      const file = await base64ToFile(
         result.data,
         name,
         mimeForExt(extOf(name))
@@ -2822,7 +2823,7 @@ async function incrementalScan() {
                 directory: Directory[directory]
             });
 
-            const file = base64ToFile(
+            const file = await base64ToFile(
                 result.data,
                 name,
                 mimeForExt(extOf(name))
