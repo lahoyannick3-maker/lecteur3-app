@@ -2552,6 +2552,12 @@ async function shareFile(record) {
 // ========== TODO CAPACITOR: Scan automatique des fichiers du telephone ==========
 
 const SCAN_EXTENSIONS = ['pdf', 'docx', 'xlsx'];
+// Limite de taille de lecture : au-dela, on saute le fichier plutot que de
+// risquer un crash memoire. Filesystem.readFile charge le fichier ENTIER en
+// base64 en memoire (+ ~33% de surcout), ce qui peut faire tuer le processus
+// par l'OS sur un appareil a faible RAM (2 Go, Android Go) bien avant que
+// notre code JS n'ait la main pour reagir.
+const SCAN_MAX_READABLE_FILE_SIZE = 15 * 1024 * 1024; // 15 Mo
 const SCAN_DIRECTORIES = [
     // NOTE : Directory.Documents (plugin Capacitor) pointe vers un dossier
     // PRIVE a l'app (Android/data/<package>/files/Documents), pas vers le
@@ -2819,6 +2825,13 @@ async function fullScan() {
 
       const lastModified = stat.mtime || stat.modified || 0;
 
+      // Protection anti-crash : fichier trop volumineux pour etre lu en
+      // base64 sur cet appareil, on le saute plutot que de risquer un crash.
+      if (stat.size && stat.size > SCAN_MAX_READABLE_FILE_SIZE) {
+        console.warn(`Fichier ignoré (trop volumineux, ${(stat.size / 1024 / 1024).toFixed(1)} Mo) : ${directory}/${path}`);
+        continue;
+      }
+
       logScanCheckpoint('readFile', `${directory}/${path}`);
       const result = await Filesystem.readFile({
         path,
@@ -2934,6 +2947,14 @@ async function incrementalScan() {
             const existing = index.get(path);
 
             if (existing?.lastModified === lastModified) continue;
+
+            // Protection anti-crash : fichier trop volumineux pour etre lu
+            // en base64 sur cet appareil, on le saute plutot que de risquer
+            // un crash.
+            if (stat.size && stat.size > SCAN_MAX_READABLE_FILE_SIZE) {
+                console.warn(`Fichier ignoré (trop volumineux, ${(stat.size / 1024 / 1024).toFixed(1)} Mo) : ${directory}/${path}`);
+                continue;
+            }
 
             const name = path.split("/").pop();
 
