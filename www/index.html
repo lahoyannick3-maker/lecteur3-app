@@ -586,6 +586,16 @@ mark.search-hl.current {
   color: #fff;
 }
 
+.scan-status-banner {
+  margin: 4px 8px 8px;
+  padding: 8px 12px;
+  background-color: #e8f7f8;
+  color: #007a80;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: center;
+}
+
 .home-file-list {
   padding: 4px 8px 16px;
 }
@@ -2874,7 +2884,24 @@ async function fullScan() {
   return added;
 }
 
+// Affiche/masque la bannière "Scan en cours..." sur l'ecran d'accueil.
+// L'element est recree a chaque renderHomeScreen() mais persiste pendant
+// toute la duree du scan (qui ne redessine que la liste via
+// renderHomeFileList(), pas tout l'ecran).
+function setScanStatus(text) {
+  const el = document.getElementById('scan-status-banner');
+  if (el) {
+    el.textContent = text;
+    el.style.display = '';
+  }
+}
+function clearScanStatus() {
+  const el = document.getElementById('scan-status-banner');
+  if (el) el.style.display = 'none';
+}
+
 async function startAutoScan() {
+    setScanStatus('🔄 Scan en cours...');
     try {
         const lastFullScan = getLastFullScan();
 
@@ -2898,6 +2925,8 @@ async function startAutoScan() {
 
     } catch (err) {
         console.warn("Scan automatique échoué :", err);
+    } finally {
+        clearScanStatus();
     }
 }
 
@@ -3475,6 +3504,17 @@ function renderHomeScreen() {
   toolsRow.appendChild(selectToggleBtn);
   container.appendChild(toolsRow);
   container.appendChild(tabsRow);
+
+  // Bannière "Scan en cours..." : masquée par defaut, activee/desactivee
+  // par setScanStatus()/clearScanStatus() pendant startAutoScan(). Utile
+  // maintenant que le scan est volontairement ralenti (yields anti-crash)
+  // pour que l'utilisateur ne pense pas que l'app est figee.
+  const scanStatusBanner = document.createElement('div');
+  scanStatusBanner.id = 'scan-status-banner';
+  scanStatusBanner.className = 'scan-status-banner';
+  scanStatusBanner.style.display = 'none';
+  scanStatusBanner.textContent = '🔄 Scan en cours...';
+  container.appendChild(scanStatusBanner);
 
   // Barre d'actions groupées (masquée tant que le mode sélection n'est pas actif)
   const bulkBar = document.createElement('div');
