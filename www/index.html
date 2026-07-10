@@ -2867,6 +2867,13 @@ async function fullScan() {
 
       added.push(record);
 
+      // Rendu progressif : rafraichit la liste au fil du scan (tous les 5
+      // fichiers ajoutes) au lieu d'attendre la toute fin, pour que
+      // l'utilisateur voie les fichiers apparaitre au fur et a mesure.
+      if (added.length % 5 === 0) {
+        renderHomeFileList();
+      }
+
     } catch (err) {
       console.warn("Scan natif :", item, err);
     }
@@ -3017,6 +3024,11 @@ async function incrementalScan() {
             }
 
             added++;
+
+            // Rendu progressif : meme logique que fullScan().
+            if (added % 5 === 0) {
+                renderHomeFileList();
+            }
 
         } catch (err) {
             console.warn("Scan incrémental :", item, err);
