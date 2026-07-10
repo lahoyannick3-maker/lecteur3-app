@@ -6,38 +6,9 @@
 <meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <script>
-  // ========== DIAGNOSTIC DE PLANTAGE ==========
-  // Capture toute erreur JS ou promesse rejetée non gérée, et la sauvegarde
-  // dans localStorage (survit même si l'app plante juste après). Permet de
-  // consulter la cause d'un crash sans passer par les logs Android natifs
-  // (utile quand "Voir les détails du plantage" n'existe pas sur le téléphone).
-  window.addEventListener('error', function (e) {
-    try {
-      localStorage.setItem('lastCrashLog', JSON.stringify({
-        type: 'error',
-        message: e.message,
-        filename: e.filename,
-        lineno: e.lineno,
-        colno: e.colno,
-        stack: e.error && e.error.stack,
-        time: new Date().toISOString()
-      }));
-    } catch (_) {}
-  });
-  window.addEventListener('unhandledrejection', function (e) {
-    try {
-      localStorage.setItem('lastCrashLog', JSON.stringify({
-        type: 'unhandledrejection',
-        message: (e.reason && e.reason.message) || String(e.reason),
-        stack: e.reason && e.reason.stack,
-        time: new Date().toISOString()
-      }));
-    } catch (_) {}
-  });
-
   // Coupe-circuit anti-boucle de plantage : on marque le lancement comme
-  // "démarré" tout de suite, et comme "terminé" seulement une fois l'écran
-  // d'accueil affiché avec succès. Si au lancement suivant on retrouve l'état
+  // "démarré" tout de suite, et comme "terminé" seulement une fois le scan
+  // automatique termine. Si au lancement suivant on retrouve l'état
   // "démarré" (jamais passé à "terminé"), c'est que l'app a planté avant la
   // fin du démarrage précédent : on saute alors le scan automatique (suspect
   // principal) pour casser la boucle et laisser l'utilisateur rouvrir l'app.
@@ -50,6 +21,7 @@
     localStorage.setItem('appLaunchState', 'started');
   } catch (_) {}
 </script>
+
 <!-- Libs locales pour mode hors ligne -->
 <script src="jszip.min.js"></script>
 <script src="docx-preview.min.js"></script>
@@ -1313,7 +1285,6 @@ canvas {
     <div class="overflow-menu" id="overflow-menu">
       <label for="file-input">Ouvrir un fichier</label>
       <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
-      <button type="button" id="show-crash-log-btn">🐞 Journal d'erreur</button>
     </div>
   </div>
   <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
@@ -2634,21 +2605,6 @@ function yieldToMainThread() {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-// Point de controle pour diagnostiquer un crash NATIF (non capturable par
-// window.onerror/unhandledrejection). On note dans localStorage l'operation
-// risquee sur le point d'etre tentee ; si le processus meurt brutalement
-// juste apres, cette trace survit et est visible au prochain lancement via
-// le bouton "Journal d'erreur", meme sans logs Android natifs (adb/logcat).
-function logScanCheckpoint(step, details) {
-  try {
-    localStorage.setItem('lastScanCheckpoint', JSON.stringify({
-      step,
-      details,
-      time: new Date().toISOString()
-    }));
-  } catch (_) {}
-}
-
 // Parcourt recursivement un dossier natif via le plugin Filesystem et
 // retourne la liste des chemins de fichiers dont l'extension correspond.
 async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, path = '', depth = 0) {
@@ -2680,7 +2636,6 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
             console.warn(`Directory inconnue : "${baseDirectory}", scan ignoré pour ce chemin.`);
             return matches;
         }
-        logScanCheckpoint('readdir', `${baseDirectory}/${path || ''} (profondeur ${depth})`);
         entries = await Filesystem.readdir({
             path,
             directory: resolvedDirectory
@@ -2827,7 +2782,6 @@ async function fullScan() {
 
       const name = path.split("/").pop();
 
-      logScanCheckpoint('stat', `${directory}/${path}`);
       const stat = await Filesystem.stat({
         path,
         directory: Directory[directory]
@@ -2842,7 +2796,6 @@ async function fullScan() {
         continue;
       }
 
-      logScanCheckpoint('readFile', `${directory}/${path}`);
       const result = await Filesystem.readFile({
         path,
         directory: Directory[directory]
@@ -2914,19 +2867,16 @@ async function startAutoScan() {
 
         if (!lastFullScan) {
             // Premier lancement : scan complet
-            logScanCheckpoint('startAutoScan', 'fullScan (premier lancement)');
             await fullScan();
             setLastFullScan();
 
         } else if (Date.now() - lastFullScan >= FULL_SCAN_INTERVAL) {
             // Scan complet périodique
-            logScanCheckpoint('startAutoScan', 'fullScan (périodique)');
             await fullScan();
             setLastFullScan();
 
         } else {
             // Scan rapide des modifications
-            logScanCheckpoint('startAutoScan', 'incrementalScan');
             await incrementalScan();
         }
 
@@ -2973,7 +2923,6 @@ async function incrementalScan() {
                 await yieldToMainThread();
             }
 
-            logScanCheckpoint('stat-incremental', `${directory}/${path}`);
             const stat = await Filesystem.stat({
                 path,
                 directory: Directory[directory]
@@ -2994,7 +2943,6 @@ async function incrementalScan() {
 
             const name = path.split("/").pop();
 
-            logScanCheckpoint('readFile-incremental', `${directory}/${path}`);
             const result = await Filesystem.readFile({
                 path,
                 directory: Directory[directory]
@@ -3634,41 +3582,8 @@ overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', 
   overflowMenu.classList.remove('active');
 });
 
-document.getElementById('show-crash-log-btn').addEventListener('click', () => {
-  overflowMenu.classList.remove('active');
-  let text = "Aucun journal de plantage enregistré pour l'instant.";
-  if (window.LAST_CRASH_LOG) {
-    const l = window.LAST_CRASH_LOG;
-    text = `[${l.time}]\n${l.type} : ${l.message}\n${l.filename ? 'Fichier: ' + l.filename + ':' + l.lineno + ':' + l.colno + '\n' : ''}${l.stack ? '\n' + l.stack : ''}`;
-  }
-  // Ajoute le dernier checkpoint de scan connu (utile pour les crashs natifs
-  // que window.onerror ne peut pas capturer).
-  try {
-    const cp = JSON.parse(localStorage.getItem('lastScanCheckpoint') || 'null');
-    if (cp) {
-      text += `\n\n--- Dernier point de contrôle du scan ---\n[${cp.time}]\n${cp.step} : ${cp.details}`;
-    }
-  } catch (_) {}
-  showConfirm(text, { title: "Journal d'erreur", icon: '🐞', okLabel: 'OK', cancelLabel: 'Fermer' });
-});
-
 // Affiche l'écran d'accueil dès le chargement de l'app.
 renderHomeScreen();
-
-// S'il existe un journal de plantage du lancement précédent, on l'affiche
-// une fois puis on l'efface, pour pouvoir diagnostiquer sans logs Android natifs.
-(function showLastCrashLogIfAny() {
-  try {
-    const raw = localStorage.getItem('lastCrashLog');
-    if (raw) {
-      localStorage.removeItem('lastCrashLog');
-      const log = JSON.parse(raw);
-      console.warn('Dernier plantage détecté :', log);
-      showToast('Un plantage précédent a été détecté. Ouvre le menu (⋮) → "Journal d\'erreur" pour le voir.', 'error');
-      window.LAST_CRASH_LOG = log;
-    }
-  } catch (_) {}
-})();
 
 // Demande la permission de notification dès l'ouverture de l'app (plutôt
 // que d'attendre le premier fichier trouvé), pour ne pas rater la toute
@@ -3724,13 +3639,8 @@ requestNotificationPermissionOnStartup()
       // Le lancement précédent n'est jamais arrivé jusqu'à "terminé" (probable
       // plantage) : on saute le scan automatique cette fois pour ne pas
       // reboucler sur le même plantage, et on prévient l'utilisateur.
-      let checkpointInfo = '';
-      try {
-        const cp = JSON.parse(localStorage.getItem('lastScanCheckpoint') || 'null');
-        if (cp) checkpointInfo = ` Dernière étape avant le plantage : ${cp.step} → ${cp.details}`;
-      } catch (_) {}
-      console.warn('Scan automatique sauté : le lancement précédent semble avoir planté.' + checkpointInfo);
-      showToast("Scan automatique désactivé temporairement (plantage détecté au dernier lancement)." + checkpointInfo, 'info');
+      console.warn('Scan automatique sauté : le lancement précédent semble avoir planté.');
+      showToast("Scan automatique désactivé temporairement (plantage détecté au dernier lancement). Relance l'app pour réessayer.", 'info');
       // Le scan est sauté mais le lancement lui-meme a reussi jusqu'ici :
       // on marque quand meme "termine" pour ne pas rester bloque en boucle.
       try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
