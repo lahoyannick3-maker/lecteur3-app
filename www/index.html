@@ -2553,8 +2553,15 @@ async function shareFile(record) {
 
 const SCAN_EXTENSIONS = ['pdf', 'docx', 'xlsx'];
 const SCAN_DIRECTORIES = [
-    { directory: 'Documents', path: '' },
-    { directory: 'Download', path: '' },
+    // NOTE : Directory.Documents (plugin Capacitor) pointe vers un dossier
+    // PRIVE a l'app (Android/data/<package>/files/Documents), pas vers le
+    // dossier public partage. Et Directory.Download n'existe meme pas dans
+    // l'enum du plugin (c'etait 'undefined' avant ce correctif, ce qui
+    // provoquait un crash natif au niveau du pont Filesystem.readdir).
+    // On passe donc par ExternalStorage + chemin explicite, comme pour
+    // WhatsApp/Telegram plus bas, pour viser le vrai stockage public.
+    { directory: 'ExternalStorage', path: 'Documents' },
+    { directory: 'ExternalStorage', path: 'Download' },
     // Emplacement WhatsApp "legacy" (Android <= 10 ou stockage partagé classique)
     { directory: 'ExternalStorage', path: 'WhatsApp/Media/WhatsApp Documents' },
     // Emplacement WhatsApp scoped storage (Android 11+)
@@ -2633,9 +2640,18 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
 
     let entries;
     try {
+        const resolvedDirectory = Directory[baseDirectory];
+        // Garde-fou : si baseDirectory ne correspond a aucune cle connue de
+        // Directory, on abandonne proprement en JS plutot que d'envoyer
+        // "directory: undefined" au pont natif Filesystem.readdir, ce qui
+        // peut provoquer un crash natif hors de portee du try/catch JS.
+        if (!resolvedDirectory) {
+            console.warn(`Directory inconnue : "${baseDirectory}", scan ignoré pour ce chemin.`);
+            return matches;
+        }
         entries = await Filesystem.readdir({
             path,
-            directory: Directory[baseDirectory]
+            directory: resolvedDirectory
         });
     } catch (err) {
         return matches;
