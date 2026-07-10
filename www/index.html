@@ -2705,11 +2705,20 @@ async function notifyNewDocuments(count) {
   }
 
   try {
+    // On ne demande PAS la permission ici : afficher un dialogue systeme
+    // juste apres un scan (qui a deja fait monter la memoire utilisee avec
+    // la lecture de fichiers + le rendu de la liste) est une transition a
+    // risque sur un appareil a faible RAM. La demande de permission se fait
+    // uniquement au demarrage (requestNotificationPermissionOnStartup), pas
+    // ici. Si l'utilisateur n'a pas accepte a ce moment-la, on abandonne
+    // simplement la notification.
     const { display } = await LocalNotifications.checkPermissions();
-    if (display !== 'granted') {
-      const req = await LocalNotifications.requestPermissions();
-      if (req.display !== 'granted') return;
-    }
+    if (display !== 'granted') return;
+
+    // Petit delai pour laisser la memoire se stabiliser apres le scan avant
+    // de solliciter un autre plugin natif (meme sans dialogue, planifier
+    // une notification passe par le pont natif).
+    await new Promise(resolve => setTimeout(resolve, 300));
 
     await LocalNotifications.schedule({
       notifications: [
@@ -2879,10 +2888,20 @@ async function incrementalScan() {
     }
 
     let added = 0;
+    let readCounter = 0;
 
     for (const item of paths) {
         try {
             const { path, directory } = item;
+
+            // Cede la main periodiquement, comme dans fullScan() : sans ca,
+            // stat+readFile+base64ToFile enchaines sur beaucoup de fichiers
+            // bloquent le thread principal assez longtemps pour declencher
+            // un crash/ANR, surtout sur un appareil a faible RAM.
+            readCounter++;
+            if (readCounter % 5 === 0) {
+                await yieldToMainThread();
+            }
 
             const stat = await Filesystem.stat({
                 path,
@@ -3532,11 +3551,6 @@ document.getElementById('show-crash-log-btn').addEventListener('click', () => {
 // Affiche l'écran d'accueil dès le chargement de l'app.
 renderHomeScreen();
 
-// Le démarrage a atteint ce point sans planter : on marque le lancement
-// comme "terminé" pour que le coupe-circuit anti-boucle (voir tout début du
-// fichier) ne se déclenche pas au prochain lancement.
-try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
-
 // S'il existe un journal de plantage du lancement précédent, on l'affiche
 // une fois puis on l'efface, pour pouvoir diagnostiquer sans logs Android natifs.
 (function showLastCrashLogIfAny() {
@@ -3608,11 +3622,20 @@ requestNotificationPermissionOnStartup()
       // reboucler sur le même plantage, et on prévient l'utilisateur.
       console.warn('Scan automatique sauté : le lancement précédent semble avoir planté.');
       showToast("Scan automatique désactivé temporairement (plantage détecté au dernier lancement). Relance l'app pour réessayer.", 'info');
+      // Le scan est sauté mais le lancement lui-meme a reussi jusqu'ici :
+      // on marque quand meme "termine" pour ne pas rester bloque en boucle.
+      try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
       return;
     }
-    startAutoScan().catch(err =>
-        console.warn('Scan natif au demarrage : echec', err)
-    );
+    startAutoScan()
+      .catch(err => console.warn('Scan natif au demarrage : echec', err))
+      .finally(() => {
+        // Le scan (partie la plus a risque du demarrage) est termine, avec ou
+        // sans succes, sans avoir plante : on marque le lancement "termine"
+        // pour que le coupe-circuit anti-boucle (voir tout debut du fichier)
+        // ne se declenche pas au prochain lancement.
+        try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
+      });
   });
 
 // ===== AJOUT: Mini-jeu Snake (écran dédié, indépendant du lecteur) =====
