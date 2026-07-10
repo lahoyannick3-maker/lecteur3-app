@@ -2586,10 +2586,51 @@ async function base64ToFile(base64Data, name, mimeType) {
   return new File([blob], name, { type: mimeType });
 }
 
+// Limites de securite anti-ANR : sans elles, un scan sur un stockage avec
+// beaucoup de sous-dossiers (ou des dossiers systeme comme Android/data qui
+// repondent lentement/en erreur) peut bloquer le thread principal assez
+// longtemps pour que le watchdog Android tue l'app.
+const SCAN_MAX_DEPTH = 12;
+const SCAN_MAX_DIRS = 5000;
+const SCAN_EXCLUDED_DIR_NAMES = new Set([
+  '.thumbnails', '.trashed', '.trash', 'node_modules', '.git', '.cache', 'cache'
+]);
+// Note : on exclut precisement 'Android/data' (et non 'Android' en entier)
+// car Android/media est utilise par le scan WhatsApp/Telegram plus haut et
+// ne doit surtout pas etre bloque.
+const SCAN_EXCLUDED_PATH_PREFIXES = ['Android/data'];
+
+// Compteur de dossiers visites pendant un scan. Remis a zero au debut de
+// chaque fullScan() via resetScanDirCounter().
+let scanDirCounter = 0;
+function resetScanDirCounter() { scanDirCounter = 0; }
+
+// Cede la main au thread principal (laisse Android rafraichir l'UI) afin
+// d'eviter que des readdir() cumules trop longs ne declenchent l'ANR.
+function yieldToMainThread() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 // Parcourt recursivement un dossier natif via le plugin Filesystem et
 // retourne la liste des chemins de fichiers dont l'extension correspond.
-async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, path = '') {
+async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, path = '', depth = 0) {
     let matches = [];
+
+    // Coupe-circuit profondeur : protege contre les arborescences
+    // anormalement profondes ou les liens symboliques circulaires.
+    if (depth > SCAN_MAX_DEPTH) return matches;
+
+    // Coupe-circuit nombre total de dossiers visites : protege contre les
+    // stockages avec des dizaines de milliers de sous-dossiers.
+    if (scanDirCounter >= SCAN_MAX_DIRS) return matches;
+    scanDirCounter++;
+
+    // Cede la main periodiquement pour laisser Android respirer et eviter
+    // le crash ANR "watchdog" pendant un scan long.
+    if (scanDirCounter % 25 === 0) {
+      await yieldToMainThread();
+    }
+
     let entries;
     try {
         entries = await Filesystem.readdir({
@@ -2600,9 +2641,18 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
         return matches;
     }
     for (const entry of entries.files) {
+        // Exclut les dossiers systeme/techniques connus pour etre lourds,
+        // proteges ou inutiles a scanner.
+        if (SCAN_EXCLUDED_DIR_NAMES.has(entry.name)) continue;
+
         const entryPath = path
             ? `${path}/${entry.name}`
             : entry.name;
+
+        // Exclusion par chemin complet (ex: Android/data, protege/lent),
+        // sans toucher aux autres sous-dossiers d'Android comme
+        // Android/media utilise par le scan WhatsApp.
+        if (SCAN_EXCLUDED_PATH_PREFIXES.some(prefix => entryPath === prefix || entryPath.startsWith(prefix + '/'))) continue;
         const isDir =
             entry.type === 'directory' ||
             entry.type === 'folder';
@@ -2612,7 +2662,8 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
                     Filesystem,
                     Directory,
                     baseDirectory,
-                    entryPath
+                    entryPath,
+                    depth + 1
                 )
             );
         } else if (SCAN_EXTENSIONS.includes(extOf(entry.name))) {
@@ -2676,6 +2727,7 @@ async function fullScan() {
   }
 
   let paths = [];
+  resetScanDirCounter();
 
   for (const dir of SCAN_DIRECTORIES) {
     paths.push(
@@ -2701,10 +2753,20 @@ async function fullScan() {
   );
 
   const added = [];
+  let readCounter = 0;
 
   for (const item of paths) {
     try {
       const { path, directory } = item;
+
+      // Cede la main periodiquement : lire + convertir en base64 des
+      // fichiers volumineux (docx/xlsx notamment, souvent plus lourds que
+      // les pdf) peut bloquer le thread principal assez longtemps pour
+      // declencher l'ANR si on enchaine trop de lectures sans pause.
+      readCounter++;
+      if (readCounter % 5 === 0) {
+        await yieldToMainThread();
+      }
 
       const name = path.split("/").pop();
 
