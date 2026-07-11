@@ -7,11 +7,6 @@
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <script>
   // Coupe-circuit anti-boucle de plantage : on marque le lancement comme
-  // "démarré" tout de suite, et comme "terminé" seulement une fois le scan
-  // automatique termine. Si au lancement suivant on retrouve l'état
-  // "démarré" (jamais passé à "terminé"), c'est que l'app a planté avant la
-  // fin du démarrage précédent : on saute alors le scan automatique (suspect
-  // principal) pour casser la boucle et laisser l'utilisateur rouvrir l'app.
   window.SKIP_AUTOSCAN_THIS_LAUNCH = false;
   try {
     const prevLaunchState = localStorage.getItem('appLaunchState');
@@ -830,7 +825,7 @@ canvas {
 #zoom-wrapper {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 15px;
   width: 100%;
 }
@@ -902,7 +897,7 @@ canvas {
   width: 100%;
   box-sizing: border-box;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
 }
 /* Le vrai conteneur docx-preview : on NE force PLUS sa largeur à 100%.
    Il garde sa taille réelle (page A4 en px), et c'est le transform: scale()
@@ -1611,7 +1606,6 @@ function loadFileIntoViewer(file) {
   // Nouveau document : on repart a un zoom de 100%.
   window.customZoomScale = 1;
   zoomWrapper.style.zoom = 1;
-  resetZoomPadding();
   resetViewerState();
   currentFileExtension = file.name.split('.').pop().toLowerCase();
   docTitle.textContent = file.name;
@@ -1760,17 +1754,17 @@ window.addEventListener('resize', () => {
 // de #viewer qui reste le conteneur scrollable), via la propriété CSS "zoom"
 // (deja utilisee ailleurs pour l'ajustement docx), pilotee par un geste de
 // pincement a 2 doigts. Remplace l'ancien zoom natif de la page entiere
-// (qui zoomait aussi la barre du haut).
+// (qui zoomait aussi la barre du haut). Le contenu est aligné à GAUCHE
+// (pas centré) : un conteneur avec défilement ne peut structurellement pas
+// défiler pour révéler le débordement à gauche d'un contenu centré — c'est
+// une limite du CSS, pas un choix esthétique. L'alignement à gauche évite
+// ce problème à la racine : tout débordement se fait vers la droite/le bas,
+// naturellement accessible par le défilement normal du navigateur.
 window.customZoomScale = 1;
 const CUSTOM_ZOOM_MIN = 1;
 const CUSTOM_ZOOM_MAX = 4;
 let pinchStartDistance = 0;
 let pinchStartZoom = 1;
-let lastZoomPaddingLeft = 0;
-// Largeur de référence de #viewer AVANT tout padding de zoom. Mesurée une
-// fois (pas via viewer.clientWidth pendant le pincement, qui inclurait déjà
-// le padding ajouté précédemment et fausserait le calcul en boucle).
-let baseViewerWidth = 0;
 
 function distanceBetweenTouches(touches) {
   const dx = touches[0].clientX - touches[1].clientX;
@@ -1778,38 +1772,10 @@ function distanceBetweenTouches(touches) {
   return Math.hypot(dx, dy);
 }
 
-// Le contenu zoomé reste centré (align-items: center), mais un conteneur
-// avec défilement ne peut naturellement défiler que vers la droite/le bas
-// pour révéler un débordement centré, pas vers la gauche. On ajoute donc un
-// padding horizontal égal au débordement de chaque côté : ça crée un vrai
-// espace défilable des deux côtés, sans changer l'alignement visuel.
-function applyZoomPadding(zoom) {
-  const extra = Math.max(0, Math.round(baseViewerWidth * (zoom - 1) / 2));
-  viewer.style.paddingLeft = extra + 'px';
-  viewer.style.paddingRight = extra + 'px';
-  // Compense le décalage induit par le changement de padding, pour que le
-  // point actuellement visible ne saute pas brusquement à l'écran.
-  viewer.scrollLeft += (extra - lastZoomPaddingLeft);
-  lastZoomPaddingLeft = extra;
-}
-
-function resetZoomPadding() {
-  viewer.style.paddingLeft = '';
-  viewer.style.paddingRight = '';
-  lastZoomPaddingLeft = 0;
-  // Remesure la largeur de référence maintenant que le padding est à 0.
-  baseViewerWidth = viewer.clientWidth;
-}
-
 viewer.addEventListener('touchstart', (e) => {
   if (isDocumentOpen && e.touches.length === 2) {
     pinchStartDistance = distanceBetweenTouches(e.touches);
     pinchStartZoom = window.customZoomScale;
-    // Si aucun padding n'est actuellement appliqué, on peut mesurer la
-    // largeur de référence en toute sécurité à cet instant précis.
-    if (lastZoomPaddingLeft === 0) {
-      baseViewerWidth = viewer.clientWidth;
-    }
   }
 }, { passive: true });
 
@@ -1825,7 +1791,6 @@ viewer.addEventListener('touchmove', (e) => {
     const newZoom = Math.min(CUSTOM_ZOOM_MAX, Math.max(CUSTOM_ZOOM_MIN, pinchStartZoom * ratio));
     window.customZoomScale = newZoom;
     zoomWrapper.style.zoom = newZoom;
-    applyZoomPadding(newZoom);
   }
 }, { passive: false });
 
@@ -2318,8 +2283,7 @@ let libraryDbPromise = null;
 function openLibraryDB() {
   if (libraryDbPromise) return libraryDbPromise;
   libraryDbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(LIBRARY_DB_NAME, 2);
-
+const request = indexedDB.open(LIBRARY_DB_NAME, 3);
 request.onupgradeneeded = (e) => {
   const db = e.target.result;
 
@@ -2334,6 +2298,9 @@ request.onupgradeneeded = (e) => {
   if (!store.indexNames.contains('path')) {
     store.createIndex('path', 'path', { unique: false });
   }
+  if (!store.indexNames.contains('hash')) {
+  store.createIndex('hash', 'hash', { unique: false });
+}
 };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -2341,83 +2308,87 @@ request.onupgradeneeded = (e) => {
   return libraryDbPromise;
 }
 
-function saveFileToLibrary(file, path = null, lastModified = null, directory = null) {
-  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+async function calculateFileHash(file) {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest(
+    'SHA-256',
+    buffer
+  );
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
 
+async function saveFileToLibrary(file, path = null, lastModified = null, directory = null) {
+  const hash = await calculateFileHash(file);
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
     const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
     const store = tx.objectStore(LIBRARY_STORE_NAME);
-
     const key = path ? `${directory}/${path}` : null;
-
-    if (key) {
-
-      const getReq = store.getAll();
-
-      getReq.onsuccess = () => {
-
-        const existingRecord = getReq.result.find(
-          r => r.path && `${r.directory || "Documents"}/${r.path}` === key
+    const getReq = store.getAll();
+    getReq.onsuccess = () => {
+      const files = getReq.result;
+      let existingRecord = null;
+      // 1) Priorité : même chemin
+      if (key) {
+        existingRecord = files.find(
+          r => r.path &&
+          `${r.directory || "Documents"}/${r.path}` === key
         );
-
-        if (existingRecord) {
-
-          existingRecord.name = file.name;
-          existingRecord.type = file.type;
-          existingRecord.size = file.size;
-          existingRecord.lastModified = lastModified;
-          existingRecord.directory = directory;
-          existingRecord.blob = file;
-
-          store.put(existingRecord);
-
-        } else {
-
-          const record = {
-            id: crypto.randomUUID
-              ? crypto.randomUUID()
-              : 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2),
-            name: file.name,
-            path,
-            directory,
-            type: file.type,
-            size: file.size,
-            lastModified,
-            date: Date.now(),
-            favorite: false,
-            lastOpened: null,
-            blob: file
-          };
-
-          store.put(record);
-        }
-      };
-
-      getReq.onerror = () => reject(getReq.error);
-
-    } else {
-
+      }
+      // 2) Sinon : même hash = même fichier
+      if (!existingRecord) {
+        existingRecord = files.find(
+          r => r.hash && r.hash === hash
+        );
+      }
+      // 3) Compatibilité anciens fichiers sans hash
+      if (!existingRecord && !key) {
+        existingRecord = files.find(r =>
+          !r.path &&
+          !r.hash &&
+          r.name === file.name &&
+          r.size === file.size &&
+          r.lastModified === lastModified
+        );
+      }
+      if (existingRecord) {
+        // Conservation des données utilisateur
+        existingRecord.name = file.name;
+        existingRecord.type = file.type;
+        existingRecord.size = file.size;
+        existingRecord.lastModified = lastModified;
+        existingRecord.directory = directory;
+        existingRecord.path = path;
+        existingRecord.blob = file;
+        existingRecord.hash = hash;
+        store.put(existingRecord);
+        resolve(existingRecord);
+        return;
+      }
+      // Nouveau fichier
       const record = {
         id: crypto.randomUUID
           ? crypto.randomUUID()
           : 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         name: file.name,
-        path: null,
-        directory: null,
+        path,
+        directory,
         type: file.type,
         size: file.size,
         lastModified,
         date: Date.now(),
         favorite: false,
         lastOpened: null,
-        blob: file
+        blob: file,
+        hash
       };
-
       store.put(record);
-    }
-
-    tx.oncomplete = () => resolve();
+      resolve(record);
+    };
+    getReq.onerror = () => reject(getReq.error);
     tx.onerror = () => reject(tx.error);
-
   }));
 }
 
@@ -2603,19 +2574,9 @@ async function shareFile(record) {
 
 const SCAN_EXTENSIONS = ['pdf', 'docx', 'xlsx'];
 // Limite de taille de lecture : au-dela, on saute le fichier plutot que de
-// risquer un crash memoire. Filesystem.readFile charge le fichier ENTIER en
-// base64 en memoire (+ ~33% de surcout), ce qui peut faire tuer le processus
-// par l'OS sur un appareil a faible RAM (2 Go, Android Go) bien avant que
-// notre code JS n'ait la main pour reagir.
 const SCAN_MAX_READABLE_FILE_SIZE = 15 * 1024 * 1024; // 15 Mo
 const SCAN_DIRECTORIES = [
     // NOTE : Directory.Documents (plugin Capacitor) pointe vers un dossier
-    // PRIVE a l'app (Android/data/<package>/files/Documents), pas vers le
-    // dossier public partage. Et Directory.Download n'existe meme pas dans
-    // l'enum du plugin (c'etait 'undefined' avant ce correctif, ce qui
-    // provoquait un crash natif au niveau du pont Filesystem.readdir).
-    // On passe donc par ExternalStorage + chemin explicite, comme pour
-    // WhatsApp/Telegram plus bas, pour viser le vrai stockage public.
     { directory: 'ExternalStorage', path: 'Documents' },
     { directory: 'ExternalStorage', path: 'Download' },
     // Emplacement WhatsApp "legacy" (Android <= 10 ou stockage partagé classique)
@@ -2638,11 +2599,6 @@ function mimeForExt(ext) {
 }
 
 // Convertit une chaine base64 (retournee par Filesystem.readFile) en Blob/File.
-// Utilise fetch() sur une data URL plutôt qu'une boucle JS manuelle
-// (atob + tableau d'octets un par un) : le décodage se fait alors nativement
-// côté navigateur (C++) au lieu de créer un énorme tableau JS temporaire en
-// mémoire pour chaque fichier - ce qui pouvait faire planter le WebView lors
-// du scan de plusieurs fichiers de quelques Mo chacun.
 async function base64ToFile(base64Data, name, mimeType) {
   const res = await fetch(`data:${mimeType};base64,${base64Data}`);
   const blob = await res.blob();
@@ -2650,17 +2606,12 @@ async function base64ToFile(base64Data, name, mimeType) {
 }
 
 // Limites de securite anti-ANR : sans elles, un scan sur un stockage avec
-// beaucoup de sous-dossiers (ou des dossiers systeme comme Android/data qui
-// repondent lentement/en erreur) peut bloquer le thread principal assez
-// longtemps pour que le watchdog Android tue l'app.
 const SCAN_MAX_DEPTH = 12;
 const SCAN_MAX_DIRS = 5000;
 const SCAN_EXCLUDED_DIR_NAMES = new Set([
   '.thumbnails', '.trashed', '.trash', 'node_modules', '.git', '.cache', 'cache'
 ]);
 // Note : on exclut precisement 'Android/data' (et non 'Android' en entier)
-// car Android/media est utilise par le scan WhatsApp/Telegram plus haut et
-// ne doit surtout pas etre bloque.
 const SCAN_EXCLUDED_PATH_PREFIXES = ['Android/data'];
 
 // Compteur de dossiers visites pendant un scan. Remis a zero au debut de
@@ -2698,9 +2649,6 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
     try {
         const resolvedDirectory = Directory[baseDirectory];
         // Garde-fou : si baseDirectory ne correspond a aucune cle connue de
-        // Directory, on abandonne proprement en JS plutot que d'envoyer
-        // "directory: undefined" au pont natif Filesystem.readdir, ce qui
-        // peut provoquer un crash natif hors de portee du try/catch JS.
         if (!resolvedDirectory) {
             console.warn(`Directory inconnue : "${baseDirectory}", scan ignoré pour ce chemin.`);
             return matches;
@@ -2749,8 +2697,6 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
 }
 
 // Envoie une notification système locale (visible même si l'utilisateur a
-// changé d'app, tant que l'app reste ouverte en arrière-plan proche).
-// Nécessite le plugin @capacitor/local-notifications côté projet.
 async function notifyNewDocuments(count) {
   if (!window.Capacitor?.isNativePlatform()) return;
 
@@ -2762,12 +2708,6 @@ async function notifyNewDocuments(count) {
 
   try {
     // On ne demande PAS la permission ici : afficher un dialogue systeme
-    // juste apres un scan (qui a deja fait monter la memoire utilisee avec
-    // la lecture de fichiers + le rendu de la liste) est une transition a
-    // risque sur un appareil a faible RAM. La demande de permission se fait
-    // uniquement au demarrage (requestNotificationPermissionOnStartup), pas
-    // ici. Si l'utilisateur n'a pas accepte a ce moment-la, on abandonne
-    // simplement la notification.
     const { display } = await LocalNotifications.checkPermissions();
     if (display !== 'granted') return;
 
@@ -2793,7 +2733,6 @@ async function notifyNewDocuments(count) {
 }
 
 // Scan complet : lit chaque fichier trouve, l'ajoute a la bibliotheque
-// IndexedDB (sans doublons) puis rafraichit l'ecran d'accueil.
 
 async function fullScan() {
   if (!window.Capacitor?.isNativePlatform()) {
@@ -2841,14 +2780,10 @@ async function fullScan() {
       const { path, directory } = item;
 
       // Cede la main periodiquement : lire + convertir en base64 des
-      // fichiers volumineux (docx/xlsx notamment, souvent plus lourds que
-      // les pdf) peut bloquer le thread principal assez longtemps pour
-      // declencher l'ANR si on enchaine trop de lectures sans pause.
       readCounter++;
       if (readCounter % 5 === 0) {
         await yieldToMainThread();
       }
-
       const name = path.split("/").pop();
 
       const stat = await Filesystem.stat({
@@ -3572,7 +3507,6 @@ container.appendChild(bulkBar);
   zoomWrapper.innerHTML = '';
   window.customZoomScale = 1;
   zoomWrapper.style.zoom = 1;
-  resetZoomPadding();
   zoomWrapper.appendChild(container);
   currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
   renderHomeFileList();
