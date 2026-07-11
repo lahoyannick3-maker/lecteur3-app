@@ -824,6 +824,17 @@ canvas {
   max-width: 100%;
   display: block;
 }
+/* Wrapper interne qui recoit le zoom (pincement), separe de #viewer qui
+   gere le defilement. Reproduit le layout flex que #viewer appliquait
+   auparavant directement a ses enfants (pages PDF, document Word/Excel). */
+#zoom-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  transform-origin: top center;
+}
 /* Conteneur Word et Excel */
 .document-wrapper {
   background-color: white;
@@ -1288,7 +1299,9 @@ canvas {
 </div>
 <div class="tabs-container" id="excel-tabs"></div>
 <div class="viewer-container" id="viewer">
-  <p class="info-text" id="placeholder">Aucun fichier ouvert. Importez un document PDF, Word ou Excel pour commencer.</p>
+  <div id="zoom-wrapper">
+    <p class="info-text" id="placeholder">Aucun fichier ouvert. Importez un document PDF, Word ou Excel pour commencer.</p>
+  </div>
 </div>
 <div class="scroll-fab-container">
   <button class="scroll-fab" id="scroll-top-btn" title="Aller en haut">▲</button>
@@ -1526,6 +1539,7 @@ function showPrompt(message, defaultValue = '', options = {}) {
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 const fileInput = document.getElementById('file-input');
 const viewer = document.getElementById('viewer');
+const zoomWrapper = document.getElementById('zoom-wrapper');
 const docTitle = document.getElementById('doc-title');
 const excelTabs = document.getElementById('excel-tabs');
 let currentPdfDoc = null;
@@ -1594,7 +1608,10 @@ function resetViewerState() {
 function loadFileIntoViewer(file) {
   if (!file) return;
   // Reset complet + anti memory leak - CORRECTION 1
-  viewer.innerHTML = '<p class="loading">Chargement...</p>';
+  zoomWrapper.innerHTML = '<p class="loading">Chargement...</p>';
+  // Nouveau document : on repart a un zoom de 100%.
+  window.customZoomScale = 1;
+  zoomWrapper.style.zoom = 1;
   resetViewerState();
   currentFileExtension = file.name.split('.').pop().toLowerCase();
   docTitle.textContent = file.name;
@@ -1608,14 +1625,14 @@ function loadFileIntoViewer(file) {
   }
   const fileReader = new FileReader();
   fileReader.onload = function() {
-    viewer.innerHTML = '';
+    zoomWrapper.innerHTML = '';
         // 2. WORD (Nouveau moteur docx-preview)
     if (currentFileExtension === 'docx') {
       // Conteneur extérieur : c'est lui qui a la largeur de l'écran
       // et qui masque le débordement de la page une fois réduite (scale)
       const outer = document.createElement('div');
       outer.className = 'docx-scale-outer';
-      viewer.appendChild(outer);
+      zoomWrapper.appendChild(outer);
       // Configuration options pour docx-preview
       const options = {
         inWrapper: true,      // INDISPENSABLE : laisse docx-preview créer sa propre structure
@@ -1638,7 +1655,7 @@ function loadFileIntoViewer(file) {
           }
       })
       .catch(err => {
-          viewer.innerHTML = `<p class="info-text">Erreur Word : ${err.message}</p>`;
+          zoomWrapper.innerHTML = `<p class="info-text">Erreur Word : ${err.message}</p>`;
       });
     requestAnimationFrame(() => {
     showScrollFabs();
@@ -1659,7 +1676,7 @@ function loadFileIntoViewer(file) {
         wrapper.className = 'document-wrapper';
         wrapper.innerHTML = htmlTable;
         wrapper.style.display = index === 0 ? 'block' : 'none';
-        viewer.appendChild(wrapper);
+        zoomWrapper.appendChild(wrapper);
         tabButton.addEventListener('click', () => {
           document.querySelectorAll('.sheet-button').forEach(btn => btn.classList.remove('active'));
           tabButton.classList.add('active');
@@ -1683,7 +1700,7 @@ fileInput.addEventListener('change', (e) => {
 });
 // AJOUT: Ouverture PDF en streaming. On passe une URL blob à pdf.js au lieu
 function openPdfFile(file) {
-  viewer.innerHTML = '';
+  zoomWrapper.innerHTML = '';
   const fileURL = URL.createObjectURL(file);
   currentPdfObjectUrl = fileURL;
   pdfjsLib.getDocument({ url: fileURL, disableStream: false, disableAutoFetch: false }).promise.then((pdf) => {
@@ -1708,14 +1725,14 @@ function openPdfFile(file) {
         fragment.appendChild(canvas);
         canvases.push(canvas);
       }
-      viewer.appendChild(fragment);
+      zoomWrapper.appendChild(fragment);
       canvases.forEach(canvas => {
         pdfRenderObserver.observe(canvas);
         pdfUnloadObserver.observe(canvas);
       });
     });
   }).catch(err => {
-    viewer.innerHTML = `<p class="info-text">Erreur PDF : ${err.message}</p>`;
+    zoomWrapper.innerHTML = `<p class="info-text">Erreur PDF : ${err.message}</p>`;
   });
 }
 // AJOUT: Réduit (scale) la page Word entière pour qu'elle tienne dans l'écran,
@@ -1739,10 +1756,11 @@ window.addEventListener('resize', () => {
     fitDocxToScreen(currentDocxRefs.outer, currentDocxRefs.wrapper);
   }
 });
-// Zoom personnalisé limité à la zone du document (#viewer), via la
-// propriété CSS "zoom" (deja utilisee ailleurs pour l'ajustement docx),
-// pilotee par un geste de pincement a 2 doigts. Remplace l'ancien zoom
-// natif de la page entiere (qui zoomait aussi la barre du haut).
+// Zoom personnalisé limité à la zone du document (zoomWrapper, à l'intérieur
+// de #viewer qui reste le conteneur scrollable), via la propriété CSS "zoom"
+// (deja utilisee ailleurs pour l'ajustement docx), pilotee par un geste de
+// pincement a 2 doigts. Remplace l'ancien zoom natif de la page entiere
+// (qui zoomait aussi la barre du haut).
 window.customZoomScale = 1;
 const CUSTOM_ZOOM_MIN = 1;
 const CUSTOM_ZOOM_MAX = 4;
@@ -1756,14 +1774,14 @@ function distanceBetweenTouches(touches) {
 }
 
 viewer.addEventListener('touchstart', (e) => {
-  if (e.touches.length === 2) {
+  if (isDocumentOpen && e.touches.length === 2) {
     pinchStartDistance = distanceBetweenTouches(e.touches);
     pinchStartZoom = window.customZoomScale;
   }
 }, { passive: true });
 
 viewer.addEventListener('touchmove', (e) => {
-  if (e.touches.length === 2 && pinchStartDistance > 0) {
+  if (isDocumentOpen && e.touches.length === 2 && pinchStartDistance > 0) {
     e.preventDefault(); // évite que le scroll natif interfère avec le pincement
     isZooming = true;
     scrollFabContainer.classList.remove("visible");
@@ -1773,7 +1791,7 @@ viewer.addEventListener('touchmove', (e) => {
     const ratio = newDistance / pinchStartDistance;
     const newZoom = Math.min(CUSTOM_ZOOM_MAX, Math.max(CUSTOM_ZOOM_MIN, pinchStartZoom * ratio));
     window.customZoomScale = newZoom;
-    viewer.style.zoom = newZoom;
+    zoomWrapper.style.zoom = newZoom;
   }
 }, { passive: false });
 
@@ -3517,8 +3535,10 @@ container.appendChild(bulkBar);
   listEl.className = 'home-file-list';
   container.appendChild(listEl);
 
-  viewer.innerHTML = '';
-  viewer.appendChild(container);
+  zoomWrapper.innerHTML = '';
+  window.customZoomScale = 1;
+  zoomWrapper.style.zoom = 1;
+  zoomWrapper.appendChild(container);
   currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
   renderHomeFileList();
   }
