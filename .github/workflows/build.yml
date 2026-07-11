@@ -44,6 +44,44 @@ jobs:
         sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" \/>' $MANIFEST
         sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>' $MANIFEST
 
+    - name: Activation du zoom (pincement) dans le WebView Android
+      run: |
+        # MainActivity.java par defaut ne configure pas le WebView pour
+        # accepter le pincement de zoom. On regenere ce fichier avec les
+        # bons reglages, a partir de l'appId declare dans capacitor.config.json.
+        # (Ecrit via Node plutot qu'un heredoc bash, pour eviter les pieges
+        # d'indentation dans un fichier YAML.)
+        node -e "
+        const fs = require('fs');
+        const path = require('path');
+        const appId = require('./capacitor.config.json').appId;
+        const pkgPath = appId.split('.').join('/');
+        const dir = path.join('android/app/src/main/java', pkgPath);
+        fs.mkdirSync(dir, { recursive: true });
+        const content = [
+          'package ' + appId + ';',
+          '',
+          'import android.os.Bundle;',
+          'import android.webkit.WebSettings;',
+          'import com.getcapacitor.BridgeActivity;',
+          '',
+          'public class MainActivity extends BridgeActivity {',
+          '    @Override',
+          '    public void onCreate(Bundle savedInstanceState) {',
+          '        super.onCreate(savedInstanceState);',
+          '        WebSettings settings = this.bridge.getWebView().getSettings();',
+          '        settings.setSupportZoom(true);',
+          '        settings.setBuiltInZoomControls(true);',
+          '        settings.setDisplayZoomControls(false);',
+          '    }',
+          '}',
+          ''
+        ].join('\n');
+        fs.writeFileSync(path.join(dir, 'MainActivity.java'), content);
+        console.log('MainActivity.java mis à jour (zoom activé) :', path.join(dir, 'MainActivity.java'));
+        console.log(content);
+        "
+
     - name: Synchronisation finale des scripts (libs) et du code web
       run: npx cap sync android
 
