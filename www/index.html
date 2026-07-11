@@ -821,7 +821,6 @@ mark.search-hl.current {
 canvas {
   box-shadow: 0 4px 15px rgba(0,0,0,0.25);
   background-color: white;
-  max-width: 100%;
   display: block;
 }
 /* Wrapper interne qui recoit le zoom (pincement), separe de #viewer qui
@@ -833,7 +832,6 @@ canvas {
   align-items: center;
   gap: 15px;
   width: 100%;
-  transform-origin: top center;
 }
 /* Conteneur Word et Excel */
 .document-wrapper {
@@ -1612,6 +1610,7 @@ function loadFileIntoViewer(file) {
   // Nouveau document : on repart a un zoom de 100%.
   window.customZoomScale = 1;
   zoomWrapper.style.zoom = 1;
+  resetZoomPadding();
   resetViewerState();
   currentFileExtension = file.name.split('.').pop().toLowerCase();
   docTitle.textContent = file.name;
@@ -1766,6 +1765,11 @@ const CUSTOM_ZOOM_MIN = 1;
 const CUSTOM_ZOOM_MAX = 4;
 let pinchStartDistance = 0;
 let pinchStartZoom = 1;
+let lastZoomPaddingLeft = 0;
+// Largeur de référence de #viewer AVANT tout padding de zoom. Mesurée une
+// fois (pas via viewer.clientWidth pendant le pincement, qui inclurait déjà
+// le padding ajouté précédemment et fausserait le calcul en boucle).
+let baseViewerWidth = 0;
 
 function distanceBetweenTouches(touches) {
   const dx = touches[0].clientX - touches[1].clientX;
@@ -1773,10 +1777,38 @@ function distanceBetweenTouches(touches) {
   return Math.hypot(dx, dy);
 }
 
+// Le contenu zoomé reste centré (align-items: center), mais un conteneur
+// avec défilement ne peut naturellement défiler que vers la droite/le bas
+// pour révéler un débordement centré, pas vers la gauche. On ajoute donc un
+// padding horizontal égal au débordement de chaque côté : ça crée un vrai
+// espace défilable des deux côtés, sans changer l'alignement visuel.
+function applyZoomPadding(zoom) {
+  const extra = Math.max(0, Math.round(baseViewerWidth * (zoom - 1) / 2));
+  viewer.style.paddingLeft = extra + 'px';
+  viewer.style.paddingRight = extra + 'px';
+  // Compense le décalage induit par le changement de padding, pour que le
+  // point actuellement visible ne saute pas brusquement à l'écran.
+  viewer.scrollLeft += (extra - lastZoomPaddingLeft);
+  lastZoomPaddingLeft = extra;
+}
+
+function resetZoomPadding() {
+  viewer.style.paddingLeft = '';
+  viewer.style.paddingRight = '';
+  lastZoomPaddingLeft = 0;
+  // Remesure la largeur de référence maintenant que le padding est à 0.
+  baseViewerWidth = viewer.clientWidth;
+}
+
 viewer.addEventListener('touchstart', (e) => {
   if (isDocumentOpen && e.touches.length === 2) {
     pinchStartDistance = distanceBetweenTouches(e.touches);
     pinchStartZoom = window.customZoomScale;
+    // Si aucun padding n'est actuellement appliqué, on peut mesurer la
+    // largeur de référence en toute sécurité à cet instant précis.
+    if (lastZoomPaddingLeft === 0) {
+      baseViewerWidth = viewer.clientWidth;
+    }
   }
 }, { passive: true });
 
@@ -1792,6 +1824,7 @@ viewer.addEventListener('touchmove', (e) => {
     const newZoom = Math.min(CUSTOM_ZOOM_MAX, Math.max(CUSTOM_ZOOM_MIN, pinchStartZoom * ratio));
     window.customZoomScale = newZoom;
     zoomWrapper.style.zoom = newZoom;
+    applyZoomPadding(newZoom);
   }
 }, { passive: false });
 
@@ -3538,6 +3571,7 @@ container.appendChild(bulkBar);
   zoomWrapper.innerHTML = '';
   window.customZoomScale = 1;
   zoomWrapper.style.zoom = 1;
+  resetZoomPadding();
   zoomWrapper.appendChild(container);
   currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
   renderHomeFileList();
