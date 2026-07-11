@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <script>
@@ -1340,18 +1340,12 @@ canvas {
 <script>
 
 // ===== Notifications stylées (remplace alert()) =====
+// Toasts internes desactives (l'app ne doit plus afficher de bandeaux
+// internes, seulement les notifications systeme externes le cas echeant).
+// On garde la fonction (tous les appels existants restent valides) mais
+// elle ne fait plus rien a l'ecran.
 function showToast(message, type = 'info', duration = 3200) {
-  const container = document.getElementById('toastContainer');
-  if (!container) { console.log(message); return; }
-  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
-  const toast = document.createElement('div');
-  toast.className = 'toast toast-' + type;
-  toast.style.setProperty('--toast-life', (duration / 1000) + 's');
-  toast.innerHTML = '<span class="toast-icon">' + (icons[type] || icons.info) + '</span><span class="toast-msg"></span>';
-  toast.querySelector('.toast-msg').textContent = message;
-  container.appendChild(toast);
-  const totalLife = duration + 300; // laisse le temps à l'animation de sortie
-  setTimeout(() => { toast.remove(); }, totalLife);
+  console.log(`[toast desactive] ${type} : ${message}`);
 }
 
 // ===== Confirmation stylée (remplace confirm()) =====
@@ -1694,7 +1688,7 @@ function openPdfFile(file) {
   currentPdfObjectUrl = fileURL;
   pdfjsLib.getDocument({ url: fileURL, disableStream: false, disableAutoFetch: false }).promise.then((pdf) => {
     currentPdfDoc = pdf;
-    lastScale = window.visualViewport?.scale || 1;
+    lastScale = window.customZoomScale || 1;
     // Rendu paresseux : on crée seulement des canvas "placeholder" vides
     pdf.getPage(1).then((firstPage) => {
       const approxViewport = firstPage.getViewport({ scale: 1 });
@@ -1745,18 +1739,51 @@ window.addEventListener('resize', () => {
     fitDocxToScreen(currentDocxRefs.outer, currentDocxRefs.wrapper);
   }
 });
-window.visualViewport?.addEventListener("resize", () => {
+// Zoom personnalisé limité à la zone du document (#viewer), via la
+// propriété CSS "zoom" (deja utilisee ailleurs pour l'ajustement docx),
+// pilotee par un geste de pincement a 2 doigts. Remplace l'ancien zoom
+// natif de la page entiere (qui zoomait aussi la barre du haut).
+window.customZoomScale = 1;
+const CUSTOM_ZOOM_MIN = 1;
+const CUSTOM_ZOOM_MAX = 4;
+let pinchStartDistance = 0;
+let pinchStartZoom = 1;
 
+function distanceBetweenTouches(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+viewer.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 2) {
+    pinchStartDistance = distanceBetweenTouches(e.touches);
+    pinchStartZoom = window.customZoomScale;
+  }
+}, { passive: true });
+
+viewer.addEventListener('touchmove', (e) => {
+  if (e.touches.length === 2 && pinchStartDistance > 0) {
+    e.preventDefault(); // évite que le scroll natif interfère avec le pincement
     isZooming = true;
-
     scrollFabContainer.classList.remove("visible");
-
     clearTimeout(zoomHideTimeout);
 
-    zoomHideTimeout = setTimeout(() => {
-        isZooming = false;
-    }, 250);
+    const newDistance = distanceBetweenTouches(e.touches);
+    const ratio = newDistance / pinchStartDistance;
+    const newZoom = Math.min(CUSTOM_ZOOM_MAX, Math.max(CUSTOM_ZOOM_MIN, pinchStartZoom * ratio));
+    window.customZoomScale = newZoom;
+    viewer.style.zoom = newZoom;
+  }
+}, { passive: false });
 
+viewer.addEventListener('touchend', (e) => {
+  if (e.touches.length < 2) {
+    pinchStartDistance = 0;
+    zoomHideTimeout = setTimeout(() => {
+      isZooming = false;
+    }, 250);
+  }
 });
 // AJOUT: Panneau de diagnostic replié, affiche le vrai HTML généré par
 
@@ -1962,7 +1989,7 @@ function renderPDFPage(pdf, pageNum, targetCanvas, useBuffer = true, onComplete 
     const unscaledViewport = pageViewports[pageNum];
     const displayWidth = window.innerWidth - 30;
     const baseScale = (displayWidth / unscaledViewport.width);
-    const currentVisualZoom = window.visualViewport?.scale || 1;
+    const currentVisualZoom = window.customZoomScale || 1;
     const totalScale = baseScale * currentVisualZoom;
     const viewport = page.getViewport({ scale: totalScale });
     // AJOUT: on plafonne le pixelRatio à 2 (au lieu de 3 sur certains téléphones).
@@ -2021,7 +2048,7 @@ function refreshVisiblePages() {
 }
 document.addEventListener('touchend', () => {
   if (!currentPdfDoc) return;
-  const currentScale = window.visualViewport?.scale || 1;
+  const currentScale = window.customZoomScale || 1;
   if (Math.abs(currentScale - lastScale) > 0.05) {
     lastScale = currentScale;
     clearTimeout(renderTimeout);
