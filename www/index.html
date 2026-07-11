@@ -2764,13 +2764,7 @@ async function fullScan() {
 
   if (!paths.length) return [];
 
-  const existing = await getAllLibraryFiles();
-
-  const existingKeys = new Set(
-    existing.map(r =>
-      `${r.directory || ""}/${r.path || r.name}_${r.size}`
-    )
-  );
+  const index = await getLibraryIndex();
 
   const added = [];
   let readCounter = 0;
@@ -2792,6 +2786,12 @@ async function fullScan() {
       });
 
       const lastModified = stat.mtime || stat.modified || 0;
+      const existing = index.get(path);
+
+      // Optimisation vitesse : fichier deja connu et inchange (meme
+      // lastModified) => on saute la lecture + le hash, couteux sur de
+      // gros fichiers ou une bibliotheque volumineuse.
+      if (existing?.lastModified === lastModified) continue;
 
       // Protection anti-crash : fichier trop volumineux pour etre lu en
       // base64 sur cet appareil, on le saute plutot que de risquer un crash.
@@ -2811,16 +2811,24 @@ async function fullScan() {
         mimeForExt(extOf(name))
       );
 
-      const key = `${directory}/${path}_${file.size}`;
-
-      if (existingKeys.has(key)) continue;
-
-      const record = await saveFileToLibrary(
-        file,
-        path,
-        lastModified,
-        directory
-      );
+      let record;
+      if (existing) {
+        await patchLibraryRecord(existing.id, {
+          blob: file,
+          name,
+          size: file.size,
+          type: file.type,
+          lastModified
+        });
+        record = { id: existing.id };
+      } else {
+        record = await saveFileToLibrary(
+          file,
+          path,
+          lastModified,
+          directory
+        );
+      }
 
       added.push(record);
 
@@ -3583,6 +3591,25 @@ async function requestNotificationPermissionOnStartup() {
 // Demande la permission de lecture du stockage. Sans ça, Filesystem.readdir()
 // échoue silencieusement (attrapé par le try/catch de listNativeFilesRecursive)
 // et le scan ne trouve jamais aucun fichier, sans aucune erreur visible.
+//
+// Vrai le indicateur : on attend un retour dans l'app (depuis les Réglages)
+// pour revérifier la permission et relancer le scan automatiquement.
+let storagePermissionAwaitingSettings = false;
+
+function openManageAllFilesSettings() {
+  try {
+    if (window.StoragePermissionBridge?.openManageAllFilesSettings) {
+      window.StoragePermissionBridge.openManageAllFilesSettings();
+      return true;
+    }
+    console.warn("Pont natif StoragePermissionBridge indisponible (build pas encore à jour ?).");
+    return false;
+  } catch (err) {
+    console.warn("Ouverture des réglages stockage échouée :", err);
+    return false;
+  }
+}
+
 async function requestStoragePermissionOnStartup() {
   if (!window.Capacitor?.isNativePlatform()) return;
 
@@ -3597,14 +3624,52 @@ async function requestStoragePermissionOnStartup() {
         // Android 11+ : ce plugin ne peut demander que le "runtime permission"
         // classique. La permission spéciale "Accès à tous les fichiers"
         // (MANAGE_EXTERNAL_STORAGE) doit être activée à la main par
-        // l'utilisateur : Paramètres > Applications > Mon Lecteur >
-        // Autorisations > Fichiers et contenus multimédias > Autoriser la
-        // gestion de tous les fichiers.
-        showToast("Autorise l'accès au stockage dans les paramètres de l'app pour que le scan automatique fonctionne.", 'info');
+        // l'utilisateur, dans un écran de Réglages dédié qu'on ouvre
+        // directement pour lui via le pont natif.
+        const accepted = await showConfirm(
+          "Pour scanner automatiquement tes documents (Téléchargements, WhatsApp...), l'app a besoin d'un accès complet au stockage. Tu vas être redirigé vers l'écran d'autorisation.",
+          {
+            title: "Accès au stockage requis",
+            icon: "📂",
+            okLabel: "Autoriser",
+            cancelLabel: "Plus tard"
+          }
+        );
+        if (accepted) {
+          storagePermissionAwaitingSettings = openManageAllFilesSettings();
+        }
       }
     }
   } catch (err) {
     console.warn("Demande de permission stockage échouée :", err);
+  }
+}
+
+// Au retour dans l'app (depuis l'écran de Réglages), on revérifie la
+// permission et on relance le scan automatiquement si elle a été accordée,
+// sans que l'utilisateur ait à rouvrir l'app manuellement.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!storagePermissionAwaitingSettings) return;
+  recheckStoragePermissionAfterSettings();
+});
+
+async function recheckStoragePermissionAfterSettings() {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  const { Filesystem } = window.Capacitor.Plugins || {};
+  if (!Filesystem) return;
+
+  try {
+    const status = await Filesystem.checkPermissions();
+    if (status.publicStorage === 'granted') {
+      storagePermissionAwaitingSettings = false;
+      startAutoScan().catch(
+        err => console.warn('Scan après autorisation stockage : échec', err)
+      );
+    }
+  } catch (err) {
+    console.warn("Revérification permission stockage échouée :", err);
   }
 }
 
@@ -3632,6 +3697,102 @@ requestNotificationPermissionOnStartup()
         try { localStorage.setItem('appLaunchState', 'completed'); } catch (_) {}
       });
   });
+
+// ===== Bouton retour Android : ramène à l'écran d'accueil au lieu de =====
+// ===== quitter l'app, tant qu'on n'est pas déjà sur l'accueil. =====
+//
+// Priorité (du plus "au-dessus" au plus "en-dessous") :
+//   1) une popup/panneau ouvert (confirmation, saisie texte, tri,
+//      options fichier) -> on la referme (comme un clic en dehors)
+//   2) un menu/dépliant ouvert (menu ⋮, filtre, barre de recherche du
+//      document) -> on le referme simplement
+//   3) le mode sélection multiple (cases à cocher) sur l'accueil -> on
+//      l'annule et on revient à la liste normale
+//   4) le mini-jeu -> retour à l'accueil
+//   5) un document ouvert (viewer) -> retour à l'accueil
+//   6) déjà sur l'accueil, rien d'ouvert -> comportement normal (quitte
+//      l'app), comme s'y attend l'utilisateur
+async function setupAndroidBackButton() {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  const { App } = window.Capacitor.Plugins || {};
+  if (!App) {
+    console.warn("Plugin App manquant : le bouton retour Android quittera l'app comme avant.");
+    return;
+  }
+
+  // Referme une popup de type overlay (confirmOverlay, promptOverlay,
+  // sortSheetOverlay, fileActionsSheetOverlay) en simulant exactement ce
+  // qu'il se passe quand l'utilisateur clique en dehors de la boîte de
+  // dialogue : chacune de ces popups a déjà ce comportement d'annulation,
+  // on le réutilise plutôt que de dupliquer leur logique interne.
+  function closeOverlayIfActive(id) {
+    const overlay = document.getElementById(id);
+    if (overlay && overlay.classList.contains('active')) {
+      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return true;
+    }
+    return false;
+  }
+
+  App.addListener('backButton', () => {
+    // 1) Popups (confirmation, renommage, tri, options fichier)
+    const overlayIds = [
+      'confirmOverlay',
+      'promptOverlay',
+      'sortSheetOverlay',
+      'fileActionsSheetOverlay'
+    ];
+    for (const id of overlayIds) {
+      if (closeOverlayIfActive(id)) return;
+    }
+
+    // 2) Menus/dépliants ouverts sur l'écran d'accueil ou le viewer
+    if (overflowMenu.classList.contains('active')) {
+      overflowMenu.classList.remove('active');
+      return;
+    }
+    if (currentHomeFilterRefs?.filterDropdown?.classList.contains('active')) {
+      currentHomeFilterRefs.filterDropdown.classList.remove('active');
+      currentHomeFilterRefs.filterBtn?.classList.remove('open');
+      return;
+    }
+    if (searchBar.classList.contains('active')) {
+      closeSearch();
+      return;
+    }
+
+    // 3) Mode sélection multiple sur l'accueil -> on l'annule (même logique
+    // que le bouton "Annuler" ou qu'après une suppression groupée) et on
+    // reste sur l'accueil, sans le quitter.
+    if (homeSelectMode) {
+      homeSelectMode = false;
+      homeSelectedIds.clear();
+      renderHomeScreen();
+      return;
+    }
+
+    // 4) Mini-jeu ouvert -> retour à l'accueil (réutilise le bouton "Accueil"
+    // du jeu, qui gère aussi l'arrêt propre de la boucle de jeu).
+    const gameScreen = document.getElementById('game-screen');
+    if (gameScreen?.classList.contains('active')) {
+      document.getElementById('game-back-btn')?.click();
+      return;
+    }
+
+    // 5) Document ouvert (PDF/Word/Excel) -> retour à l'accueil
+    if (isDocumentOpen) {
+      goHome();
+      updateBackFabVisibility();
+      return;
+    }
+
+    // 6) Déjà sur l'accueil, rien d'ouvert -> comportement natif normal
+    App.exitApp();
+  });
+}
+
+setupAndroidBackButton();
 
 // ===== AJOUT: Mini-jeu Snake (écran dédié, indépendant du lecteur) =====
 (function () {
