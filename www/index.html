@@ -65,19 +65,27 @@ body {
    devient un overlay flottant caché par défaut. Comme le zoom natif zoome
    toute la page, l'entête (bouton retour, titre...) peut sortir de l'écran
    quand on est zoomé/déplacé dans le document ; on le fait alors réapparaître
-   par-dessus le contenu d'un simple tap, sans avoir à dézoomer. */
+   par-dessus le contenu d'un simple tap, sans avoir à dézoomer.
+   IMPORTANT : sur ce WebView, "position: fixed" reste ancré à la page
+   (layout viewport) et NE suit PAS la zone visible pendant un pincement
+   (visual viewport) — c'est pour ça que l'entête restait invisible une fois
+   zoomé. On corrige donc sa position nous-mêmes via JS (visualViewport),
+   d'où le "transform" laissé libre ici : il est entièrement piloté par
+   updateHeaderViewportTransform() dans le script, l'affichage/masquage se
+   faisant uniquement via l'opacité. */
 body.viewer-open .toolbar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   border-radius: 0 0 16px 16px;
-  transform: translateY(-100%);
-  transition: transform 0.18s ease;
+  transform-origin: top left;
+  opacity: 0;
+  transition: opacity 0.18s ease;
   pointer-events: none;
 }
 body.viewer-open .toolbar.header-visible {
-  transform: translateY(0);
+  opacity: 1;
   pointer-events: auto;
 }
 .title {
@@ -1576,6 +1584,27 @@ function setNativeZoomEnabled(enabled) {
     : 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
 }
 
+// AJOUT : recale manuellement l'entête sur la zone réellement visible à
+// l'écran (visual viewport), car ce WebView ne le fait pas tout seul pour
+// les éléments "position: fixed" pendant un pincement (contrairement à
+// Chrome desktop). Sans ça, l'entête reste ancré au sommet de la PAGE
+// (layout viewport) et disparaît dès qu'on zoome/déplace la vue ailleurs
+// que tout en haut. `scale(1 / zoom)` compense aussi l'agrandissement du
+// zoom pour que l'entête garde toujours la même taille à l'écran.
+function updateHeaderViewportTransform() {
+  if (!toolbarEl || !window.visualViewport) return;
+  const vv = window.visualViewport;
+  const scale = vv.scale || 1;
+  const x = vv.offsetLeft || 0;
+  const y = vv.offsetTop || 0;
+  toolbarEl.style.transform = `translate(${x}px, ${y}px) scale(${1 / scale})`;
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateHeaderViewportTransform);
+  window.visualViewport.addEventListener('scroll', updateHeaderViewportTransform);
+}
+
 // Bascule entre le mode "accueil / bibliothèque" (entête classique, pas de
 // zoom) et le mode "visionneuse" (zoom natif activé, entête en overlay
 // caché par défaut, révélé au tap).
@@ -1584,6 +1613,7 @@ function setViewerZoomMode(active) {
   document.body.classList.toggle('viewer-open', active);
   clearTimeout(headerHideTimeout);
   if (active) {
+    updateHeaderViewportTransform();
     // On affiche brièvement l'entête à l'ouverture du document, puis on le
     // masque comme pour un tap classique.
     showFloatingHeader();
@@ -1594,6 +1624,7 @@ function setViewerZoomMode(active) {
 
 function showFloatingHeader() {
   if (!toolbarEl || !document.body.classList.contains('viewer-open')) return;
+  updateHeaderViewportTransform();
   toolbarEl.classList.add('header-visible');
   clearTimeout(headerHideTimeout);
   headerHideTimeout = setTimeout(() => {
