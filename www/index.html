@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" id="viewport-meta" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="color-scheme" content="light only">
 <title>Mon Lecteur Multi-Fichiers Officiel</title>
 <script>
@@ -60,6 +60,25 @@ body {
   height: 2px;
   background: linear-gradient(90deg, #00c2cb, #00adb5, #007a80);
   border-radius: 0 0 16px 16px;
+}
+/* AJOUT : en mode visionneuse (zoom natif du navigateur activé), l'entête
+   devient un overlay flottant caché par défaut. Comme le zoom natif zoome
+   toute la page, l'entête (bouton retour, titre...) peut sortir de l'écran
+   quand on est zoomé/déplacé dans le document ; on le fait alors réapparaître
+   par-dessus le contenu d'un simple tap, sans avoir à dézoomer. */
+body.viewer-open .toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-radius: 0 0 16px 16px;
+  transform: translateY(-100%);
+  transition: transform 0.18s ease;
+  pointer-events: none;
+}
+body.viewer-open .toolbar.header-visible {
+  transform: translateY(0);
+  pointer-events: auto;
 }
 .title {
   font-size: 1.15rem;
@@ -1539,6 +1558,83 @@ function showPrompt(message, defaultValue = '', options = {}) {
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 const fileInput = document.getElementById('file-input');
 const viewer = document.getElementById('viewer');
+
+// ========== AJOUT : zoom natif du navigateur dans la visionneuse ==========
+// Le zoom natif (pincement géré directement par le WebView, comme dans un
+// vrai navigateur) remplace le zoom CSS personnalisé précédent. Comme ce
+// zoom porte sur toute la page, l'entête (bouton retour, titre...) peut
+// sortir de l'écran une fois zoomé/déplacé : on la fait alors réapparaître
+// en overlay flottant d'un simple tap sur le document (voir plus bas).
+const viewportMeta = document.getElementById('viewport-meta');
+const toolbarEl = document.querySelector('.toolbar');
+let headerHideTimeout = null;
+
+function setNativeZoomEnabled(enabled) {
+  if (!viewportMeta) return;
+  viewportMeta.setAttribute('content', enabled
+    ? 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=6.0, user-scalable=yes'
+    : 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+// Bascule entre le mode "accueil / bibliothèque" (entête classique, pas de
+// zoom) et le mode "visionneuse" (zoom natif activé, entête en overlay
+// caché par défaut, révélé au tap).
+function setViewerZoomMode(active) {
+  setNativeZoomEnabled(active);
+  document.body.classList.toggle('viewer-open', active);
+  clearTimeout(headerHideTimeout);
+  if (active) {
+    // On affiche brièvement l'entête à l'ouverture du document, puis on le
+    // masque comme pour un tap classique.
+    showFloatingHeader();
+  } else if (toolbarEl) {
+    toolbarEl.classList.remove('header-visible');
+  }
+}
+
+function showFloatingHeader() {
+  if (!toolbarEl || !document.body.classList.contains('viewer-open')) return;
+  toolbarEl.classList.add('header-visible');
+  clearTimeout(headerHideTimeout);
+  headerHideTimeout = setTimeout(() => {
+    toolbarEl.classList.remove('header-visible');
+  }, 3000);
+}
+
+function toggleFloatingHeader() {
+  if (!toolbarEl) return;
+  if (toolbarEl.classList.contains('header-visible')) {
+    clearTimeout(headerHideTimeout);
+    toolbarEl.classList.remove('header-visible');
+  } else {
+    showFloatingHeader();
+  }
+}
+
+// Un tap sur le document (et non un scroll/pincement) fait apparaître ou
+// disparaître l'entête. On distingue le tap d'un scroll/pincement via un
+// petit seuil de déplacement entre le début et la fin du toucher.
+let headerTapStartX = 0;
+let headerTapStartY = 0;
+let headerTapStartTouches = 0;
+viewer.addEventListener('touchstart', (e) => {
+  if (!document.body.classList.contains('viewer-open')) return;
+  headerTapStartTouches = e.touches.length;
+  if (e.touches.length === 1) {
+    headerTapStartX = e.touches[0].clientX;
+    headerTapStartY = e.touches[0].clientY;
+  }
+}, { passive: true });
+viewer.addEventListener('touchend', (e) => {
+  if (!document.body.classList.contains('viewer-open')) return;
+  if (headerTapStartTouches !== 1 || e.changedTouches.length !== 1) return;
+  const dx = Math.abs(e.changedTouches[0].clientX - headerTapStartX);
+  const dy = Math.abs(e.changedTouches[0].clientY - headerTapStartY);
+  if (dx < 10 && dy < 10) {
+    toggleFloatingHeader();
+  }
+}, { passive: true });
+
 const zoomWrapper = document.getElementById('zoom-wrapper');
 const docTitle = document.getElementById('doc-title');
 const excelTabs = document.getElementById('excel-tabs');
@@ -1616,6 +1712,7 @@ function loadFileIntoViewer(file) {
   currentFileExtension = file.name.split('.').pop().toLowerCase();
   docTitle.textContent = file.name;
   isDocumentOpen = true;
+  setViewerZoomMode(true);
   updateBackFabVisibility();
   updateTopBarButtons();
   // AJOUT: Pour un PDF, on évite de lire tout le fichier en mémoire d'abord
@@ -1760,54 +1857,31 @@ window.addEventListener('resize', () => {
 // de #viewer qui reste le conteneur scrollable), via la propriété CSS "zoom"
 // (deja utilisee ailleurs pour l'ajustement docx), pilotee par un geste de
 // pincement a 2 doigts. Remplace l'ancien zoom natif de la page entiere
-// (qui zoomait aussi la barre du haut). Le contenu est aligné à GAUCHE
-// (pas centré) : un conteneur avec défilement ne peut structurellement pas
-// défiler pour révéler le débordement à gauche d'un contenu centré — c'est
-// une limite du CSS, pas un choix esthétique. L'alignement à gauche évite
-// ce problème à la racine : tout débordement se fait vers la droite/le bas,
-// naturellement accessible par le défilement normal du navigateur.
 window.customZoomScale = 1;
-const CUSTOM_ZOOM_MIN = 1;
-const CUSTOM_ZOOM_MAX = 4;
-let pinchStartDistance = 0;
-let pinchStartZoom = 1;
 
-function distanceBetweenTouches(touches) {
-  const dx = touches[0].clientX - touches[1].clientX;
-  const dy = touches[0].clientY - touches[1].clientY;
-  return Math.hypot(dx, dy);
+// AJOUT : le pincement (pinch) est maintenant géré nativement par le
+// navigateur (WebView) plutôt que recréé en JS avec un zoom CSS. On ne fait
+// plus e.preventDefault() sur le pincement, pour laisser le geste natif du
+// navigateur agir librement — c'est ce qui permet le vrai zoom natif.
+// `window.customZoomScale` reste synchronisé avec le niveau de zoom natif
+// (via l'API visualViewport) uniquement pour que le PDF continue à se
+// re-rendre à une résolution nette quand on zoome (voir renderPDFPage plus
+// bas), sans quoi le texte deviendrait flou en zoomant.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    window.customZoomScale = window.visualViewport.scale || 1;
+    const zoomedIn = window.customZoomScale > 1.02;
+    if (zoomedIn) {
+      isZooming = true;
+      scrollFabContainer.classList.remove("visible");
+      clearTimeout(zoomHideTimeout);
+    } else {
+      zoomHideTimeout = setTimeout(() => {
+        isZooming = false;
+      }, 250);
+    }
+  });
 }
-
-viewer.addEventListener('touchstart', (e) => {
-  if (isDocumentOpen && e.touches.length === 2) {
-    pinchStartDistance = distanceBetweenTouches(e.touches);
-    pinchStartZoom = window.customZoomScale;
-  }
-}, { passive: true });
-
-viewer.addEventListener('touchmove', (e) => {
-  if (isDocumentOpen && e.touches.length === 2 && pinchStartDistance > 0) {
-    e.preventDefault(); // évite que le scroll natif interfère avec le pincement
-    isZooming = true;
-    scrollFabContainer.classList.remove("visible");
-    clearTimeout(zoomHideTimeout);
-
-    const newDistance = distanceBetweenTouches(e.touches);
-    const ratio = newDistance / pinchStartDistance;
-    const newZoom = Math.min(CUSTOM_ZOOM_MAX, Math.max(CUSTOM_ZOOM_MIN, pinchStartZoom * ratio));
-    window.customZoomScale = newZoom;
-    zoomWrapper.style.zoom = newZoom;
-  }
-}, { passive: false });
-
-viewer.addEventListener('touchend', (e) => {
-  if (e.touches.length < 2) {
-    pinchStartDistance = 0;
-    zoomHideTimeout = setTimeout(() => {
-      isZooming = false;
-    }, 250);
-  }
-});
 // AJOUT: Panneau de diagnostic replié, affiche le vrai HTML généré par
 
 function fixBrokenImageMimeTypes(wrapper) {
@@ -3381,6 +3455,7 @@ function renderHomeScreen() {
   homeSelectMode = false;
   homeSelectedIds.clear();
   isDocumentOpen = false;
+  setViewerZoomMode(false);
   updateBackFabVisibility();
   updateTopBarButtons();
   const container = document.createElement('div');
