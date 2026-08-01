@@ -571,6 +571,12 @@ mark.search-hl.current {
   padding: 12px 10px;
   border-bottom: 1px solid #eee;
   cursor: pointer;
+  /* AJOUT: desactive la selection de texte / le menu copier-coller natif
+     au profit de l'appui long qui active le mode selection multiple. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .library-item:active { background-color: #f2f2f2; }
@@ -3066,7 +3072,7 @@ function smartFileName(name, availableWidth = 220) {
 
 // AJOUT: buildLibraryItem construit une ligne de fichier (icone, nom, taille,
 // case a cocher en mode selection, ou boutons partager/supprimer sinon).
-function buildLibraryItem(record, { selectable, onOpen, onAfterChange }) {
+function buildLibraryItem(record, { selectable, onOpen, onAfterChange, onLongPress }) {
   const item = document.createElement('div');
   item.className = 'library-item' + (record.favorite ? ' is-favorite' : '');
   const dateStr = new Date(record.date).toLocaleDateString();
@@ -3136,7 +3142,36 @@ requestAnimationFrame(() => {
     return item;
   }
 
+  // AJOUT: l'appui prolonge (long press) sur un fichier n'active plus le
+  // menu copier/coller natif (voir CSS .library-item : user-select/touch-callout
+  // desactives) mais active a la place le mode selection multiple de l'app.
+  let longPressTimer = null;
+  let longPressTriggered = false;
+  const LONG_PRESS_MS = 450;
+  const clearLongPressTimer = () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  };
+  item.addEventListener('touchstart', (e) => {
+    if (e.target.closest('[data-action]')) return;
+    longPressTriggered = false;
+    clearLongPressTimer();
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      if (navigator.vibrate) navigator.vibrate(15);
+      onLongPress && onLongPress(record);
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+  item.addEventListener('touchmove', clearLongPressTimer, { passive: true });
+  item.addEventListener('touchend', clearLongPressTimer);
+  item.addEventListener('touchcancel', clearLongPressTimer);
+  item.addEventListener('contextmenu', (e) => e.preventDefault());
+
   item.addEventListener('click', async (e) => {
+    if (longPressTriggered) {
+      longPressTriggered = false;
+      e.stopPropagation();
+      return;
+    }
     const actionBtn = e.target.closest('[data-action]');
     if (!actionBtn) {
       onOpen(record);
@@ -3323,7 +3358,12 @@ function renderHomeFileList() {
             const file = new File([r.blob], r.name, { type: r.type });
             loadFileIntoViewer(file);
           },
-          onAfterChange: renderHomeFileList
+          onAfterChange: renderHomeFileList,
+          onLongPress: (r) => {
+            if (currentHomeRefs && currentHomeRefs.activateSelectModeFromLongPress) {
+              currentHomeRefs.activateSelectModeFromLongPress(r.id);
+            }
+          }
         });
         listEl.appendChild(item);
       });
@@ -3485,9 +3525,9 @@ bulkDeleteBtn.innerHTML = `
 bulkBar.appendChild(bulkShareBtn);
 bulkBar.appendChild(bulkDeleteBtn);
 container.appendChild(bulkBar);
- selectToggleBtn.addEventListener('click', () => {
-    homeSelectMode = !homeSelectMode;
-    homeSelectedIds.clear();
+ // AJOUT: factorisation de la mise a jour visuelle du mode selection, pour
+  // pouvoir l'activer aussi bien depuis le bouton que depuis un appui long.
+  function applyHomeSelectModeUI() {
     selectToggleBtn.title = homeSelectMode ? 'Annuler' : 'Sélectionner';
     selectToggleBtn.innerHTML = homeSelectMode
       ? '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'
@@ -3502,8 +3542,26 @@ container.appendChild(bulkBar);
     selectAllBtn.classList.remove('active');
     selectAllBtn.title = 'Tout sélectionner';
     selectAllBtn.innerHTML = ICON_CHECK_EMPTY;
+  }
+
+  selectToggleBtn.addEventListener('click', () => {
+    homeSelectMode = !homeSelectMode;
+    homeSelectedIds.clear();
+    applyHomeSelectModeUI();
     renderHomeFileList();
   });
+
+  // AJOUT: permet a un appui long sur un fichier (voir buildLibraryItem)
+  // d'activer le mode selection multiple directement avec ce fichier coche,
+  // a la place du menu copier/coller natif du systeme.
+  function activateHomeSelectModeFromLongPress(recordId) {
+    if (homeSelectMode) return;
+    homeSelectMode = true;
+    homeSelectedIds.clear();
+    homeSelectedIds.add(recordId);
+    applyHomeSelectModeUI();
+    renderHomeFileList();
+  }
   bulkShareBtn.addEventListener('click', bulkShareSelected);
   bulkDeleteBtn.addEventListener('click', bulkDeleteSelected);
 
@@ -3516,7 +3574,7 @@ container.appendChild(bulkBar);
   window.customZoomScale = 1;
   zoomWrapper.style.zoom = 1;
   zoomWrapper.appendChild(container);
-  currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn };
+  currentHomeRefs = { listEl, bulkShareBtn, bulkDeleteBtn, selectCounter, selectAllBtn, activateSelectModeFromLongPress: activateHomeSelectModeFromLongPress };
   renderHomeFileList();
   }
 function goHome() {
@@ -3569,6 +3627,35 @@ overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', 
 // Affiche l'écran d'accueil dès le chargement de l'app.
 renderHomeScreen();
 
+// AJOUT : reçoit un fichier ouvert directement depuis une autre app
+// (WhatsApp "Ouvrir avec" / "Partager vers Lecteur Multi-Formats", ou tout
+// autre gestionnaire de fichiers). MainActivity lit le fichier nativement
+// (il vient souvent d'un content:// que le JS ne peut pas lire seul) et le
+// transmet en base64 via IncomingFileBridge ; on le reconstruit ici en File
+// puis on l'ouvre comme n'importe quel fichier de la bibliothèque.
+window.checkForIncomingNativeFile = function() {
+  try {
+    if (!window.IncomingFileBridge) return;
+    const base64 = window.IncomingFileBridge.getPendingFileBase64();
+    if (!base64) return;
+    const name = window.IncomingFileBridge.getPendingFileName() || 'document';
+    const mimeType = window.IncomingFileBridge.getPendingFileMimeType() || '';
+    window.IncomingFileBridge.clearPendingFile();
+
+    const byteChars = atob(base64);
+    const byteArray = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+    const file = new File([byteArray], name, { type: mimeType });
+    loadFileIntoViewer(file);
+  } catch (err) {
+    console.warn("Ouverture du fichier reçu depuis une autre app échouée :", err);
+  }
+};
+
+// Vérifie tout de suite si l'app vient d'être lancée avec un fichier en
+// attente (cas où l'app était fermée avant l'ouverture depuis WhatsApp).
+window.checkForIncomingNativeFile();
+
 // Demande la permission de notification dès l'ouverture de l'app (plutôt
 // que d'attendre le premier fichier trouvé), pour ne pas rater la toute
 // première notification si l'utilisateur met du temps à répondre.
@@ -3592,9 +3679,29 @@ async function requestNotificationPermissionOnStartup() {
 // échoue silencieusement (attrapé par le try/catch de listNativeFilesRecursive)
 // et le scan ne trouve jamais aucun fichier, sans aucune erreur visible.
 //
+// IMPORTANT : on ne s'appuie plus sur Filesystem.checkPermissions()/
+// requestPermissions() du plugin Capacitor pour decider s'il faut demander
+// quelque chose : sur beaucoup d'appareils (notamment Android 13+, comme le
+// ZTE Blade A35e), ce plugin ne gere pas MANAGE_EXTERNAL_STORAGE et sa
+// demande de permission "classique" est silencieusement ignorée par le
+// systeme sans qu'aucune boite de dialogue n'apparaisse, ce qui faisait que
+// seule la notification etait demandee. On utilise a la place le pont natif
+// StoragePermissionBridge, qui verifie/demande directement le bon mecanisme
+// selon la version d'Android.
+//
 // Vrai le indicateur : on attend un retour dans l'app (depuis les Réglages)
 // pour revérifier la permission et relancer le scan automatiquement.
 let storagePermissionAwaitingSettings = false;
+
+function isNativeStorageGranted() {
+  try {
+    return !!(window.StoragePermissionBridge?.isStorageAccessGranted
+      && window.StoragePermissionBridge.isStorageAccessGranted());
+  } catch (err) {
+    console.warn("Vérification accès stockage échouée :", err);
+    return false;
+  }
+}
 
 function openManageAllFilesSettings() {
   try {
@@ -3613,37 +3720,49 @@ function openManageAllFilesSettings() {
 async function requestStoragePermissionOnStartup() {
   if (!window.Capacitor?.isNativePlatform()) return;
 
-  const { Filesystem } = window.Capacitor.Plugins || {};
-  if (!Filesystem) return;
+  if (!window.StoragePermissionBridge) {
+    console.warn("Pont natif StoragePermissionBridge indisponible (build pas encore à jour ?).");
+    return;
+  }
+
+  if (isNativeStorageGranted()) return;
+
+  // Avant Android 11 : boîte de dialogue système classique.
+  // À partir d'Android 11 : aucune boîte de dialogue standard ne peut
+  // déclencher "Accès à tous les fichiers", donc on redirige directement
+  // vers l'écran de Réglages dédié.
+  const accepted = await showConfirm(
+    "Pour scanner automatiquement tes documents (Téléchargements, WhatsApp...), l'app a besoin d'un accès complet au stockage.",
+    {
+      title: "Accès au stockage requis",
+      icon: "📂",
+      okLabel: "Autoriser",
+      cancelLabel: "Plus tard"
+    }
+  );
+  if (!accepted) return;
 
   try {
-    const status = await Filesystem.checkPermissions();
-    if (status.publicStorage !== 'granted') {
-      const req = await Filesystem.requestPermissions();
-      if (req.publicStorage !== 'granted') {
-        // Android 11+ : ce plugin ne peut demander que le "runtime permission"
-        // classique. La permission spéciale "Accès à tous les fichiers"
-        // (MANAGE_EXTERNAL_STORAGE) doit être activée à la main par
-        // l'utilisateur, dans un écran de Réglages dédié qu'on ouvre
-        // directement pour lui via le pont natif.
-        const accepted = await showConfirm(
-          "Pour scanner automatiquement tes documents (Téléchargements, WhatsApp...), l'app a besoin d'un accès complet au stockage. Tu vas être redirigé vers l'écran d'autorisation.",
-          {
-            title: "Accès au stockage requis",
-            icon: "📂",
-            okLabel: "Autoriser",
-            cancelLabel: "Plus tard"
-          }
-        );
-        if (accepted) {
-          storagePermissionAwaitingSettings = openManageAllFilesSettings();
-        }
-      }
-    }
+    storagePermissionAwaitingSettings = true;
+    window.StoragePermissionBridge.requestStorageAccess();
   } catch (err) {
+    storagePermissionAwaitingSettings = false;
     console.warn("Demande de permission stockage échouée :", err);
   }
 }
+
+// Rappelé depuis MainActivity.onRequestPermissionsResult (uniquement pour la
+// boîte de dialogue classique, donc Android < 11). Sur Android 11+, c'est
+// l'écouteur "visibilitychange" ci-dessous qui gère le retour depuis l'écran
+// de Réglages "Accès à tous les fichiers".
+window.onNativeStoragePermissionResult = function(granted) {
+  storagePermissionAwaitingSettings = false;
+  if (granted) {
+    startAutoScan().catch(
+      err => console.warn('Scan après autorisation stockage : échec', err)
+    );
+  }
+};
 
 // Au retour dans l'app (depuis l'écran de Réglages), on revérifie la
 // permission et on relance le scan automatiquement si elle a été accordée,
@@ -3654,22 +3773,13 @@ document.addEventListener('visibilitychange', () => {
   recheckStoragePermissionAfterSettings();
 });
 
-async function recheckStoragePermissionAfterSettings() {
-  if (!window.Capacitor?.isNativePlatform()) return;
-
-  const { Filesystem } = window.Capacitor.Plugins || {};
-  if (!Filesystem) return;
-
-  try {
-    const status = await Filesystem.checkPermissions();
-    if (status.publicStorage === 'granted') {
-      storagePermissionAwaitingSettings = false;
-      startAutoScan().catch(
-        err => console.warn('Scan après autorisation stockage : échec', err)
-      );
-    }
-  } catch (err) {
-    console.warn("Revérification permission stockage échouée :", err);
+function recheckStoragePermissionAfterSettings() {
+  if (!window.StoragePermissionBridge) return;
+  if (isNativeStorageGranted()) {
+    storagePermissionAwaitingSettings = false;
+    startAutoScan().catch(
+      err => console.warn('Scan après autorisation stockage : échec', err)
+    );
   }
 }
 
