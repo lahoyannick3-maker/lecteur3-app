@@ -703,6 +703,19 @@ mark.search-hl.current {
     margin:0 auto;
     box-sizing:border-box;
     overflow-x:hidden;
+    overflow-y:visible;
+}
+/* AJOUT: entête collant de l'écran d'accueil (recherche, tri, mode
+   sélection avec compteur et croix de fermeture, tiroir de catégorie).
+   Reste visible en haut pendant le défilement de la liste de fichiers,
+   car il est "sticky" par rapport à .viewer-container (le vrai conteneur
+   qui défile). */
+.home-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background-color: #ffffff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
 }
 .home-screen-title {
   color: #777;
@@ -858,7 +871,7 @@ canvas {
 #zoom-wrapper {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 15px;
   width: 100%;
 }
@@ -1036,6 +1049,48 @@ canvas {
 @keyframes toastOut {
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(-10px); }
+}
+
+/* AJOUT: indicateur instantané "Préparation du partage..." — le système de
+   toast global (#toastContainer / showToast) a été désactivé ailleurs dans
+   le code, donc sans ceci rien ne s'affichait entre l'appui sur le bouton
+   Partager et l'apparition (retardée par la conversion/écriture du fichier)
+   de la feuille de partage native : on avait l'impression d'un bug/gel. */
+#shareLoadingOverlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background-color: rgba(0,0,0,0.15);
+  align-items: center;
+  justify-content: center;
+}
+#shareLoadingOverlay.active {
+  display: flex;
+}
+.share-loading-box {
+  background-color: #ffffff;
+  color: #1a1a1a;
+  padding: 18px 24px;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.share-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #cdf1f3;
+  border-top-color: #00adb5;
+  border-radius: 50%;
+  animation: shareSpin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes shareSpin {
+  to { transform: rotate(360deg); }
 }
 
 /* ===== Modale de confirmation stylée (remplace confirm()) ===== */
@@ -1245,6 +1300,12 @@ canvas {
 </head>
 <body>
 <div id="toastContainer"></div>
+<div id="shareLoadingOverlay">
+  <div class="share-loading-box">
+    <div class="share-loading-spinner"></div>
+    <span>Préparation du partage...</span>
+  </div>
+</div>
 <div id="confirmOverlay">
   <div class="confirm-box">
     <div class="confirm-title"><span id="confirmIcon">⚠️</span><span id="confirmTitle">Confirmer</span></div>
@@ -2512,6 +2573,30 @@ function getAllLibraryFiles() {
   }));
 }
 
+// AJOUT: récupère uniquement les fichiers demandés (par id), au lieu de
+// getAllLibraryFiles() qui relit TOUTE la bibliothèque (les blobs de tous
+// les fichiers, potentiellement une centaine) juste pour n'en garder que
+// quelques-uns sélectionnés. Utilisé par le partage groupé pour éviter le
+// ralentissement avant l'apparition de la feuille de partage.
+function getLibraryFilesByIds(ids) {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(LIBRARY_STORE_NAME, 'readonly');
+    const store = tx.objectStore(LIBRARY_STORE_NAME);
+    const results = [];
+    let remaining = ids.length;
+    if (remaining === 0) { resolve(results); return; }
+    ids.forEach(id => {
+      const req = store.get(id);
+      req.onsuccess = () => {
+        if (req.result) results.push(req.result);
+        remaining -= 1;
+        if (remaining === 0) resolve(results);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }));
+}
+
 function deleteFileFromLibrary(id) {
   return openLibraryDB().then(db => new Promise((resolve, reject) => {
     const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
@@ -2635,7 +2720,28 @@ function blobToBase64(blob) {
   });
 }
 
+// AJOUT: affichage/masquage instantané de l'indicateur "Préparation du
+// partage...". Appelé en tout premier (avant le moindre await) dans
+// shareFile()/bulkShareSelected() pour qu'il apparaisse à l'appui du bouton,
+// pendant que la conversion/écriture du fichier tourne en arrière-plan.
+let shareLoadingHideTimer = null;
+function showShareLoading() {
+  clearTimeout(shareLoadingHideTimer);
+  const overlay = document.getElementById('shareLoadingOverlay');
+  if (overlay) overlay.classList.add('active');
+}
+function hideShareLoading() {
+  clearTimeout(shareLoadingHideTimer);
+  const overlay = document.getElementById('shareLoadingOverlay');
+  if (!overlay) return;
+  // AJOUT: léger délai avant de masquer, pour éviter un flash si l'appel
+  // natif se termine quasi instantanément (fichier déjà petit/en cache).
+  shareLoadingHideTimer = setTimeout(() => overlay.classList.remove('active'), 120);
+}
+
 async function shareFile(record) {
+  showShareLoading();
+  try {
   const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
   if (window.Capacitor?.isNativePlatform()) {
     const { Filesystem, Share } = window.Capacitor.Plugins || {};
@@ -2644,7 +2750,6 @@ async function shareFile(record) {
       return;
     }
     try {
-      showToast('Préparation du partage...', 'info');
       const base64Data = await blobToBase64(record.blob);
 
       const writeResult = await Filesystem.writeFile({
@@ -2678,6 +2783,9 @@ async function shareFile(record) {
     }
   } else {
     showToast('Le partage de fichiers n\'est pas supporté ici (nécessite HTTPS + un navigateur compatible, ex. Chrome Android).', 'error');
+  }
+  } finally {
+    hideShareLoading();
   }
 }
 
@@ -3360,8 +3468,12 @@ async function toggleSelectAllHomeFiles() {
 
 async function bulkShareSelected() {
   if (homeSelectedIds.size === 0) return;
-  const records = await getAllLibraryFiles();
-  const selected = records.filter(r => homeSelectedIds.has(r.id));
+  showShareLoading();
+  try {
+  // AJOUT: on ne récupère plus TOUTE la bibliothèque (getAllLibraryFiles)
+  // mais uniquement les fichiers sélectionnés, par id — bien plus rapide
+  // quand la bibliothèque contient une centaine de fichiers.
+  const selected = await getLibraryFilesByIds(Array.from(homeSelectedIds));
   if (selected.length === 0) return;
   // NOTE: on ne fait plus de branche native "maison" ici : navigator.share est
   // déjà réécrit plus bas dans le fichier pour le mode Capacitor natif et gère
@@ -3386,6 +3498,9 @@ async function bulkShareSelected() {
     }
   } else {
     showToast('Le partage groupé de fichiers n\'est pas supporté ici', 'error');
+  }
+  } finally {
+    hideShareLoading();
   }
 }
 
@@ -3552,6 +3667,12 @@ function renderHomeScreen() {
   currentHomeFilterRefs = { filterBtn, filterDropdown, tabDefs, updateHomeFilterButtonLabel };
   updateHomeFilterButtonLabel();
 
+  // AJOUT: conteneur "collant" regroupant la barre de recherche/sélection et
+  // le tiroir de catégorie, pour qu'ils restent visibles en haut de l'écran
+  // pendant le défilement de la liste de fichiers.
+  const stickyHeader = document.createElement('div');
+  stickyHeader.className = 'home-sticky-header';
+
   // Barre recherche + bouton Sélectionner
   const toolsRow = document.createElement('div');
   toolsRow.className = 'home-tools-row';
@@ -3601,8 +3722,9 @@ function renderHomeScreen() {
   toolsRow.appendChild(selectCounter);
   toolsRow.appendChild(selectAllBtn);
   toolsRow.appendChild(selectToggleBtn);
-  container.appendChild(toolsRow);
-  container.appendChild(tabsRow);
+  stickyHeader.appendChild(toolsRow);
+  stickyHeader.appendChild(tabsRow);
+  container.appendChild(stickyHeader);
 
   // Barre d'actions groupées (masquée tant que le mode sélection n'est pas actif)
   const bulkBar = document.createElement('div');
