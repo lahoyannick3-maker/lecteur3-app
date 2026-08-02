@@ -49,7 +49,17 @@ body {
   border-radius: 0 0 16px 16px;
   box-shadow: 0 4px 14px rgba(0,173,181,0.18), 0 1px 0 rgba(0,0,0,0.03);
   position: relative;
-  z-index: 10;
+  /* CORRECTION : le menu ⋮ (.overflow-menu) est un descendant de .toolbar,
+     qui forme son propre contexte d'empilement (position:relative +
+     z-index). Son z-index interne (20) ne compte donc QUE par rapport aux
+     autres enfants de .toolbar — de l'extérieur, tout .toolbar (menu
+     déroulant compris) était traité comme s'il était à 10. Or l'entête
+     collante de l'écran d'accueil (.home-sticky-header) est à 15, donc elle
+     passait par-dessus et masquait le menu déroulant. On remonte .toolbar
+     au-dessus de .home-sticky-header (et de tout ce qui est en dessous de
+     500, comme le mini-jeu) pour que son menu reste toujours visible.
+  */
+  z-index: 25;
 }
 .toolbar::after {
   content: "";
@@ -73,20 +83,32 @@ body {
    d'où le "transform" laissé libre ici : il est entièrement piloté par
    updateHeaderViewportTransform() dans le script, l'affichage/masquage se
    faisant uniquement via l'opacité. */
-body.viewer-open .toolbar {
+/* AJOUT : .header-wrap regroupe .toolbar ET .search-bar pour qu'ils soient
+   compensés ENSEMBLE par updateHeaderViewportTransform() pendant un
+   pincement. Avant, seul .toolbar recevait le transform JS : .search-bar
+   restait un élément de flux normal de la PAGE (layout viewport), donc le
+   zoom natif l'agrandissait/le déplaçait comme n'importe quel contenu du
+   document au lieu de rester ancré à l'écran (visual viewport). En
+   transformant le wrapper commun, .search-bar hérite automatiquement de la
+   même correction que l'entête, sans code séparé à maintenir. */
+body.viewer-open .header-wrap {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  border-radius: 0 0 16px 16px;
   transform-origin: top left;
   opacity: 0;
   transition: opacity 0.18s ease;
   pointer-events: none;
+  z-index: 25;
+  will-change: transform;
 }
-body.viewer-open .toolbar.header-visible {
+body.viewer-open .header-wrap.header-visible {
   opacity: 1;
   pointer-events: auto;
+}
+body.viewer-open .toolbar {
+  border-radius: 0 0 16px 16px;
 }
 .title {
   font-size: 1.15rem;
@@ -297,7 +319,7 @@ body.viewer-open .toolbar.header-visible {
   color: #fff;
   font-size: 1.3rem;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  touch-action: manipulation;
+  touch-action: none;
   user-select: none;
 }
 .game-dpad-btn:active { background-color: #007a80; }
@@ -702,8 +724,17 @@ mark.search-hl.current {
     max-width:700px;
     margin:0 auto;
     box-sizing:border-box;
-    overflow-x:hidden;
-    overflow-y:visible;
+    /* CORRECTION: ne JAMAIS mélanger overflow-x et overflow-y sur cet
+       élément. Avoir overflow-x:hidden avec overflow-y:visible force le
+       navigateur (par spec CSS) à convertir silencieusement overflow-y en
+       "auto", ce qui transforme .home-screen en conteneur défilant à part
+       entière. L'entête "sticky" (.home-sticky-header) se met alors à
+       coller par rapport à CE conteneur au lieu du vrai conteneur qui
+       défile (.viewer-container), et comme .home-screen lui-même ne défile
+       jamais, l'entête ressort du cadre visible dès qu'on scrolle : c'est
+       exactement le bug observé (entête visible seulement tout en haut,
+       puis disparaît au scroll). On laisse donc l'overflow par défaut
+       (visible) sur les deux axes. */
 }
 /* AJOUT: entête collant de l'écran d'accueil (recherche, tri, mode
    sélection avec compteur et croix de fermeture, tiroir de catégorie).
@@ -1051,48 +1082,6 @@ canvas {
   to { opacity: 0; transform: translateY(-10px); }
 }
 
-/* AJOUT: indicateur instantané "Préparation du partage..." — le système de
-   toast global (#toastContainer / showToast) a été désactivé ailleurs dans
-   le code, donc sans ceci rien ne s'affichait entre l'appui sur le bouton
-   Partager et l'apparition (retardée par la conversion/écriture du fichier)
-   de la feuille de partage native : on avait l'impression d'un bug/gel. */
-#shareLoadingOverlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-  background-color: rgba(0,0,0,0.15);
-  align-items: center;
-  justify-content: center;
-}
-#shareLoadingOverlay.active {
-  display: flex;
-}
-.share-loading-box {
-  background-color: #ffffff;
-  color: #1a1a1a;
-  padding: 18px 24px;
-  border-radius: 14px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-.share-loading-spinner {
-  width: 22px;
-  height: 22px;
-  border: 3px solid #cdf1f3;
-  border-top-color: #00adb5;
-  border-radius: 50%;
-  animation: shareSpin 0.7s linear infinite;
-  flex-shrink: 0;
-}
-@keyframes shareSpin {
-  to { transform: rotate(360deg); }
-}
-
 /* ===== Modale de confirmation stylée (remplace confirm()) ===== */
 #confirmOverlay {
   position: fixed;
@@ -1300,12 +1289,6 @@ canvas {
 </head>
 <body>
 <div id="toastContainer"></div>
-<div id="shareLoadingOverlay">
-  <div class="share-loading-box">
-    <div class="share-loading-spinner"></div>
-    <span>Préparation du partage...</span>
-  </div>
-</div>
 <div id="confirmOverlay">
   <div class="confirm-box">
     <div class="confirm-title"><span id="confirmIcon">⚠️</span><span id="confirmTitle">Confirmer</span></div>
@@ -1363,27 +1346,29 @@ canvas {
     </button>
   </div>
 </div>
-<div class="toolbar">
-  <button class="back-fab" id="back-home-btn" title="Retour à l'accueil">
-    <span class="back-arrow">←</span><span>Accueil</span>
-  </button>
-  <div class="title" id="doc-title">Lecteur Multi-Formats</div>
-  <button class="btn btn-icon top-btn-hidden" id="search-toggle" title="Rechercher dans le document">🔍</button>
-  <div class="menu-wrap" id="menu-wrap">
-    <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
-    <div class="overflow-menu" id="overflow-menu">
-      <label for="file-input">Ouvrir un fichier</label>
-      <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
+<div class="header-wrap" id="header-wrap">
+  <div class="toolbar">
+    <button class="back-fab" id="back-home-btn" title="Retour à l'accueil">
+      <span class="back-arrow">←</span><span>Accueil</span>
+    </button>
+    <div class="title" id="doc-title">Lecteur Multi-Formats</div>
+    <button class="btn btn-icon top-btn-hidden" id="search-toggle" title="Rechercher dans le document">🔍</button>
+    <div class="menu-wrap" id="menu-wrap">
+      <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
+      <div class="overflow-menu" id="overflow-menu">
+        <label for="file-input">Ouvrir un fichier</label>
+        <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
+      </div>
     </div>
+    <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
   </div>
-  <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
-</div>
-<div class="search-bar" id="search-bar">
-  <input type="text" id="search-input" placeholder="Rechercher dans le document...">
-  <span class="search-count" id="search-count"></span>
-  <button class="search-nav-btn" id="search-prev" title="Résultat précédent">▲</button>
-  <button class="search-nav-btn" id="search-next" title="Résultat suivant">▼</button>
-  <button class="search-nav-btn" id="search-close" title="Fermer">✕</button>
+  <div class="search-bar" id="search-bar">
+    <input type="text" id="search-input" placeholder="Rechercher dans le document...">
+    <span class="search-count" id="search-count"></span>
+    <button class="search-nav-btn" id="search-prev" title="Résultat précédent">▲</button>
+    <button class="search-nav-btn" id="search-next" title="Résultat suivant">▼</button>
+    <button class="search-nav-btn" id="search-close" title="Fermer">✕</button>
+  </div>
 </div>
 <div class="tabs-container" id="excel-tabs"></div>
 <div class="viewer-container" id="viewer">
@@ -1635,7 +1620,10 @@ const viewer = document.getElementById('viewer');
 // sortir de l'écran une fois zoomé/déplacé : on la fait alors réapparaître
 // en overlay flottant d'un simple tap sur le document (voir plus bas).
 const viewportMeta = document.getElementById('viewport-meta');
-const toolbarEl = document.querySelector('.toolbar');
+// AJOUT : on pilote .header-wrap (toolbar + search-bar ensemble) plutôt que
+// .toolbar seul, pour que la barre de recherche suive la même correction de
+// position/échelle pendant un pincement (voir CSS .header-wrap plus haut).
+const toolbarEl = document.getElementById('header-wrap');
 let headerHideTimeout = null;
 
 function setNativeZoomEnabled(enabled) {
@@ -1652,18 +1640,55 @@ function setNativeZoomEnabled(enabled) {
 // (layout viewport) et disparaît dès qu'on zoome/déplace la vue ailleurs
 // que tout en haut. `scale(1 / zoom)` compense aussi l'agrandissement du
 // zoom pour que l'entête garde toujours la même taille à l'écran.
+//
+// CORRECTION SACCADES : cette compensation ne doit jouer QUE quand on est
+// réellement zoomé (scale != 1). En dehors d'un pincement, "position:
+// fixed" fonctionne déjà nativement et correctement (le bug ne concerne
+// que le pincement, voir plus haut) ; y retoucher à chaque scroll ne
+// faisait qu'ajouter un aller-retour JS toujours en retard d'une frame sur
+// le rendu natif, d'où les à-coups même en défilement vertical non zoomé.
+// Et pendant un pincement, on ne se contente plus des seuls évènements
+// 'scroll'/'resize' de visualViewport (émis de façon irrégulière/throttled
+// pendant un défilement rapide) : on les utilise juste pour démarrer/arrêter
+// une boucle requestAnimationFrame qui relit la position à CHAQUE frame,
+// bien plus fluide et synchronisée avec le rendu du navigateur.
+let headerSyncRunning = false;
+
 function updateHeaderViewportTransform() {
   if (!toolbarEl || !window.visualViewport) return;
   const vv = window.visualViewport;
   const scale = vv.scale || 1;
+  if (Math.abs(scale - 1) < 0.01) {
+    toolbarEl.style.transform = '';
+    return;
+  }
   const x = vv.offsetLeft || 0;
   const y = vv.offsetTop || 0;
   toolbarEl.style.transform = `translate(${x}px, ${y}px) scale(${1 / scale})`;
 }
 
+function headerSyncFrame() {
+  if (!window.visualViewport || Math.abs((window.visualViewport.scale || 1) - 1) < 0.01) {
+    headerSyncRunning = false;
+    updateHeaderViewportTransform(); // remet le transform à vide proprement
+    return;
+  }
+  updateHeaderViewportTransform();
+  requestAnimationFrame(headerSyncFrame);
+}
+
+function ensureHeaderSyncRunning() {
+  if (headerSyncRunning) return;
+  headerSyncRunning = true;
+  requestAnimationFrame(headerSyncFrame);
+}
+
 if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', updateHeaderViewportTransform);
-  window.visualViewport.addEventListener('scroll', updateHeaderViewportTransform);
+  window.visualViewport.addEventListener('resize', () => {
+    updateHeaderViewportTransform();
+    ensureHeaderSyncRunning();
+  });
+  window.visualViewport.addEventListener('scroll', ensureHeaderSyncRunning);
 }
 
 // Bascule entre le mode "accueil / bibliothèque" (entête classique, pas de
@@ -1688,6 +1713,12 @@ function showFloatingHeader() {
   updateHeaderViewportTransform();
   toolbarEl.classList.add('header-visible');
   clearTimeout(headerHideTimeout);
+  // AJOUT : tant que la barre de recherche est ouverte, on ne programme pas
+  // la disparition automatique de l'entête. Sinon, une fois masqué,
+  // #search-bar (qui vit dans #header-wrap) disparaît avec lui alors que le
+  // clavier, lui, reste affiché : l'utilisateur se retrouve avec le clavier
+  // seul à l'écran, sans champ de recherche ni bouton pour le fermer.
+  if (searchBar && searchBar.classList.contains('active')) return;
   headerHideTimeout = setTimeout(() => {
     toolbarEl.classList.remove('header-visible');
   }, 3000);
@@ -1695,6 +1726,13 @@ function showFloatingHeader() {
 
 function toggleFloatingHeader() {
   if (!toolbarEl) return;
+  // AJOUT : pendant une recherche active, un tap sur le document ne doit
+  // pas masquer l'entête (voir showFloatingHeader) ; on se contente de le
+  // garder affiché / de relancer la mise en position.
+  if (searchBar && searchBar.classList.contains('active')) {
+    showFloatingHeader();
+    return;
+  }
   if (toolbarEl.classList.contains('header-visible')) {
     clearTimeout(headerHideTimeout);
     toolbarEl.classList.remove('header-visible');
@@ -2428,12 +2466,19 @@ function closeSearch() {
   searchBar.classList.remove('active');
   searchInput.value = '';
   clearHighlights();
+  // AJOUT : la recherche est fermée, on relance le compte à rebours normal
+  // de masquage automatique de l'entête (suspendu pendant que la recherche
+  // était active, voir showFloatingHeader).
+  showFloatingHeader();
 }
 
 searchToggleBtn.addEventListener('click', () => {
   searchBar.classList.toggle('active');
   if (searchBar.classList.contains('active')) {
     searchInput.focus();
+    // AJOUT : garde l'entête (et donc la barre de recherche) affiché tant
+    // qu'on tape, au lieu de le laisser disparaître après 3 secondes.
+    showFloatingHeader();
   } else {
     closeSearch();
   }
@@ -2720,28 +2765,7 @@ function blobToBase64(blob) {
   });
 }
 
-// AJOUT: affichage/masquage instantané de l'indicateur "Préparation du
-// partage...". Appelé en tout premier (avant le moindre await) dans
-// shareFile()/bulkShareSelected() pour qu'il apparaisse à l'appui du bouton,
-// pendant que la conversion/écriture du fichier tourne en arrière-plan.
-let shareLoadingHideTimer = null;
-function showShareLoading() {
-  clearTimeout(shareLoadingHideTimer);
-  const overlay = document.getElementById('shareLoadingOverlay');
-  if (overlay) overlay.classList.add('active');
-}
-function hideShareLoading() {
-  clearTimeout(shareLoadingHideTimer);
-  const overlay = document.getElementById('shareLoadingOverlay');
-  if (!overlay) return;
-  // AJOUT: léger délai avant de masquer, pour éviter un flash si l'appel
-  // natif se termine quasi instantanément (fichier déjà petit/en cache).
-  shareLoadingHideTimer = setTimeout(() => overlay.classList.remove('active'), 120);
-}
-
 async function shareFile(record) {
-  showShareLoading();
-  try {
   const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
   if (window.Capacitor?.isNativePlatform()) {
     const { Filesystem, Share } = window.Capacitor.Plugins || {};
@@ -2752,21 +2776,19 @@ async function shareFile(record) {
     try {
       const base64Data = await blobToBase64(record.blob);
 
+      // CORRECTION (réactivité) : on n'appelle plus Filesystem.getUri() après
+      // writeFile() — writeResult.uri est déjà l'URI native du fichier écrit,
+      // et ce 2e aller-retour avec le pont natif ne faisait que retarder
+      // l'apparition de la feuille de partage sans rien apporter de fiable.
       const writeResult = await Filesystem.writeFile({
         path: record.name,
         data: base64Data,
         directory: Directory.Cache,
       });
 
-      // getUri est plus fiable que writeResult.uri sur certaines versions du plugin.
-      const { uri } = await Filesystem.getUri({
-        directory: Directory.Cache,
-        path: record.name,
-      });
-
       await Share.share({
         title: record.name,
-        url: uri || writeResult.uri,
+        url: writeResult.uri,
       });
     } catch (err) {
       showToast('Le partage natif a échoué : ' + err.message, 'error');
@@ -2783,9 +2805,6 @@ async function shareFile(record) {
     }
   } else {
     showToast('Le partage de fichiers n\'est pas supporté ici (nécessite HTTPS + un navigateur compatible, ex. Chrome Android).', 'error');
-  }
-  } finally {
-    hideShareLoading();
   }
 }
 
@@ -3468,8 +3487,6 @@ async function toggleSelectAllHomeFiles() {
 
 async function bulkShareSelected() {
   if (homeSelectedIds.size === 0) return;
-  showShareLoading();
-  try {
   // AJOUT: on ne récupère plus TOUTE la bibliothèque (getAllLibraryFiles)
   // mais uniquement les fichiers sélectionnés, par id — bien plus rapide
   // quand la bibliothèque contient une centaine de fichiers.
@@ -3498,9 +3515,6 @@ async function bulkShareSelected() {
     }
   } else {
     showToast('Le partage groupé de fichiers n\'est pas supporté ici', 'error');
-  }
-  } finally {
-    hideShareLoading();
   }
 }
 
@@ -4151,7 +4165,13 @@ const pauseHintClose = document.getElementById('pause-hint-close');
 
   const COLS = 18, ROWS = 18;
   let cellSize = 16;
-  let snake, dir, nextDir, food, score, best, loopId, running;
+  let snake, dir, nextDir, food, score, best, gameLoopRafId, running;
+  let tickAccumulator = 0;
+  let lastFrameTime = 0;
+  // CORRECTION (réactivité) : intervalle entre deux déplacements du serpent.
+  // Reste identique à avant (130ms) — ce n'est pas la vitesse qui change,
+  // c'est la précision de la boucle de jeu (voir startLoop/stopLoop plus bas).
+  const TICK_INTERVAL_MS = 130;
   let gameState = 'idle';
   let resumeCountdownId = null;
 let pauseHintClosed = localStorage.getItem('snake_pause_hint_closed') === 'true';
@@ -4242,15 +4262,35 @@ let pauseHintClosed = localStorage.getItem('snake_pause_hint_closed') === 'true'
     draw();
 }
 
+  function gameLoopFrame(timestamp) {
+    if (!running) return;
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    let elapsed = timestamp - lastFrameTime;
+    lastFrameTime = timestamp;
+    tickAccumulator += elapsed;
+    // Sécurité : si la boucle a été mise en pause longtemps (app en arrière-plan,
+    // pause du GC sur l'appareil bas de gamme...), on borne le rattrapage pour
+    // ne pas faire avancer le serpent de plusieurs cases d'un coup au retour.
+    if (tickAccumulator > TICK_INTERVAL_MS * 4) tickAccumulator = TICK_INTERVAL_MS;
+    while (tickAccumulator >= TICK_INTERVAL_MS) {
+      tick();
+      tickAccumulator -= TICK_INTERVAL_MS;
+      if (gameState !== 'playing') { tickAccumulator = 0; break; }
+    }
+    if (running) gameLoopRafId = requestAnimationFrame(gameLoopFrame);
+  }
+
   function startLoop() {
     stopLoop();
-    loopId = setInterval(tick, 130);
     running = true;
+    lastFrameTime = 0;
+    tickAccumulator = 0;
+    gameLoopRafId = requestAnimationFrame(gameLoopFrame);
   }
-  
+
   function stopLoop() {
-    if (loopId) clearInterval(loopId);
-    loopId = null;
+    if (gameLoopRafId) cancelAnimationFrame(gameLoopRafId);
+    gameLoopRafId = null;
     running = false;
   }
 
@@ -4343,8 +4383,11 @@ if (gameState === 'countdown') {
     // Évite les doublons
     if (last.x === next.x && last.y === next.y)
         return;
-    // Garde seulement deux directions d'avance
-    if (directionQueue.length < 2)
+    // Garde jusqu'à 3 directions d'avance (au lieu de 2) : en jeu rapide,
+    // un joueur peut enchaîner plusieurs virages avant le tick suivant —
+    // avec seulement 2 emplacements, la 3e entrée rapide était silencieusement
+    // perdue, ce qui donnait l'impression que les boutons ne suivaient pas.
+    if (directionQueue.length < 3)
         directionQueue.push(next);
 }
 
@@ -4491,24 +4534,31 @@ document.addEventListener('visibilitychange', () => {
         }
 
         // Cas 2 : Partage multiple (ton système Sharesheet de documents/sous-dossiers)
-        let urisFichiersNatifs = [];
+        // CORRECTION (réactivité) : conversion + écriture de TOUS les fichiers en
+        // parallèle (Promise.all) au lieu d'un for..of séquentiel qui attendait
+        // fichier par fichier. Avec plusieurs fichiers sélectionnés, c'était la
+        // principale cause de lenteur avant l'ouverture de la feuille de partage
+        // (le temps total était la SOMME de chaque fichier, alors qu'il ne devrait
+        // être que le temps du plus lent).
+        const horodatage = Date.now();
+        const urisFichiersNatifs = await Promise.all(
+          donneesPartage.files.map(async (fichierWeb) => {
+            // 1. Convertir le fichier web (Blob/File) en Base64 pour l'écrire physiquement
+            const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
 
-        for (let fichierWeb of donneesPartage.files) {
-          // 1. Convertir le fichier web (Blob/File) en Base64 pour l'écrire physiquement
-          const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
+            // 2. Écrire temporairement le fichier dans le cache de l'app (privé, ne
+            // nécessite AUCUNE permission de stockage, contrairement à Directory.Documents
+            // qui échouait silencieusement tant que la permission stockage n'était pas
+            // accordée - c'est ce qui causait "Erreur lors du partage natif").
+            const fichierEcrit = await Filesystem.writeFile({
+              path: `PartageTmp_${horodatage}_${fichierWeb.name}`,
+              data: donneesBase64,
+              directory: Directory.Cache
+            });
 
-          // 2. Écrire temporairement le fichier dans le cache de l'app (privé, ne
-          // nécessite AUCUNE permission de stockage, contrairement à Directory.Documents
-          // qui échouait silencieusement tant que la permission stockage n'était pas
-          // accordée - c'est ce qui causait "Erreur lors du partage natif").
-          const fichierEcrit = await Filesystem.writeFile({
-            path: `PartageTmp_${Date.now()}_${fichierWeb.name}`,
-            data: donneesBase64,
-            directory: Directory.Cache
-          });
-
-          urisFichiersNatifs.push(fichierEcrit.uri);
-        }
+            return fichierEcrit.uri;
+          })
+        );
 
         // 3. Ouvrir la Sharesheet Android officielle avec tous les fichiers préservés
         await Share.share({
