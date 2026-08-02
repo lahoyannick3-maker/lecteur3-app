@@ -37,6 +37,21 @@ body {
 }
 * {
   -webkit-tap-highlight-color: transparent;
+  /* AJOUT : l'app n'est pas un éditeur de texte — le menu natif
+     "Copier / Partager" qui apparaît sur un appui long (titre, noms de
+     fichiers, texte d'un document Word ouvert, etc.) n'a pas de sens ici et
+     est désactivé partout. Seuls les champs de saisie de texte réels
+     (recherche, renommage) le réactivent explicitement ci-dessous, car là
+     on édite vraiment du texte. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 /* Barre d'outils */
 .toolbar {
@@ -467,7 +482,7 @@ mark.search-hl.current {
    recherche et sélection multiple - remplace l'ancien panneau modal. */
 .home-tabs-row {
   position: relative;
-  padding: 12px 10px 4px;
+  padding: 2px 10px 2px;
 }
 .home-filter-btn {
   display: flex;
@@ -544,7 +559,7 @@ mark.search-hl.current {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 4px;
+  padding: 2px 10px 4px;
   flex-wrap: wrap;
 }
 .home-tools-row.select-mode .home-search-input {
@@ -858,6 +873,16 @@ mark.search-hl.current {
   overflow-x: auto;
   padding: 6px 10px;
   gap: 6px;
+}
+/* CORRECTION : quand aucun onglet Excel n'est affiché (PDF/Word ouverts, ou
+   écran d'accueil), cette barre restait quand même présente avec son
+   padding + sa bordure, creusant un espace vide inutile entre l'entête de
+   l'app et la barre en dessous (recherche/sélection). On la supprime
+   totalement tant qu'elle est vide. */
+.tabs-container:empty {
+  display: none;
+  padding: 0;
+  border-bottom: none;
 }
 .sheet-button {
   background-color: #eeeeee;
@@ -1464,6 +1489,7 @@ function showConfirm(message, options = {}) {
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlayClick);
+      overlay.removeEventListener('touchstart', onOverlayClick);
       resolve(result);
     }
     function onOk() { cleanup(true); }
@@ -1473,6 +1499,10 @@ function showConfirm(message, options = {}) {
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlayClick);
+    // CORRECTION : referme aussi le panneau dès qu'on commence à toucher/
+    // scroller le fond (avant même que le scroll ne bouge la page), pas
+    // uniquement sur un simple tap.
+    overlay.addEventListener('touchstart', onOverlayClick, { passive: true });
   });
 }
 
@@ -1513,6 +1543,7 @@ function showSortSheet(currentField, currentDir) {
       okBtn.removeEventListener('click', onOk);
       closeBtn.removeEventListener('click', onClose);
       overlay.removeEventListener('click', onOverlayClick);
+      overlay.removeEventListener('touchstart', onOverlayClick);
       fieldRadios.forEach(r => r.removeEventListener('change', updateDirLabels));
       resolve(result);
     }
@@ -1530,6 +1561,7 @@ function showSortSheet(currentField, currentDir) {
     okBtn.addEventListener('click', onOk);
     closeBtn.addEventListener('click', onClose);
     overlay.addEventListener('click', onOverlayClick);
+    overlay.addEventListener('touchstart', onOverlayClick, { passive: true });
   });
 }
 
@@ -1552,6 +1584,7 @@ function showFileActionsSheet(record) {
       rows.forEach(r => r.removeEventListener('click', onRowClick));
       closeBtn.removeEventListener('click', onClose);
       overlay.removeEventListener('click', onOverlayClick);
+      overlay.removeEventListener('touchstart', onOverlayClick);
       resolve(result);
     }
     function onRowClick(e) {
@@ -1564,6 +1597,7 @@ function showFileActionsSheet(record) {
     rows.forEach(r => r.addEventListener('click', onRowClick));
     closeBtn.addEventListener('click', onClose);
     overlay.addEventListener('click', onOverlayClick);
+    overlay.addEventListener('touchstart', onOverlayClick, { passive: true });
   });
 }
 
@@ -1590,6 +1624,7 @@ function showPrompt(message, defaultValue = '', options = {}) {
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlayClick);
+      overlay.removeEventListener('touchstart', onOverlayClick);
       input.removeEventListener('keydown', onKeydown);
       resolve(result);
     }
@@ -1604,6 +1639,7 @@ function showPrompt(message, defaultValue = '', options = {}) {
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlayClick);
+    overlay.addEventListener('touchstart', onOverlayClick, { passive: true });
     input.addEventListener('keydown', onKeydown);
   });
 }
@@ -1660,11 +1696,21 @@ function updateHeaderViewportTransform() {
   const scale = vv.scale || 1;
   if (Math.abs(scale - 1) < 0.01) {
     toolbarEl.style.transform = '';
+    updateViewerContentOffset();
     return;
   }
   const x = vv.offsetLeft || 0;
   const y = vv.offsetTop || 0;
   toolbarEl.style.transform = `translate(${x}px, ${y}px) scale(${1 / scale})`;
+  // CORRECTION : l'entête garde une taille constante à l'écran pendant un
+  // pincement (grâce au scale(1/scale) ci-dessus), mais l'espace réservé
+  // pour elle (padding-top, voir updateViewerContentOffset) fait, lui,
+  // partie du contenu normal de la page : le zoom natif l'agrandit donc
+  // comme le reste du document. Résultat, plus on zoomait, plus cet espace
+  // devenait visuellement énorme par rapport à l'entête restée petite. On
+  // recalcule donc systématiquement le padding à chaque changement de
+  // zoom pour qu'il reste toujours de la même taille à l'écran.
+  updateViewerContentOffset();
 }
 
 function headerSyncFrame() {
@@ -1691,12 +1737,38 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', ensureHeaderSyncRunning);
 }
 
+// CORRECTION : #header-wrap est en position:fixed en mode visionneuse (pour
+// suivre le pincement, voir plus haut), donc il ne réserve aucun espace
+// dans le flux normal de la page. Comme l'entête reste maintenant affichée
+// en permanence (elle ne disparaît plus toute seule), elle cachait le tout
+// début du document en flottant par-dessus. On réserve donc manuellement,
+// en haut de la zone de défilement, un espace équivalent à sa hauteur
+// réelle (mesurée via offsetHeight, insensible au transform de zoom), en la
+// divisant par le niveau de zoom courant : comme le zoom natif agrandit
+// ensuite ce padding avec le reste du document, diviser par avance par le
+// même facteur fait que le résultat affiché à l'écran reste toujours de la
+// même taille, quel que soit le niveau de pincement.
+function updateViewerContentOffset() {
+  if (!toolbarEl || !viewer) return;
+  if (!document.body.classList.contains('viewer-open')) {
+    viewer.style.paddingTop = '';
+    return;
+  }
+  const scale = (window.visualViewport && window.visualViewport.scale) || 1;
+  viewer.style.paddingTop = ((toolbarEl.offsetHeight + 5) / scale) + 'px';
+}
+if (toolbarEl && window.ResizeObserver) {
+  new ResizeObserver(updateViewerContentOffset).observe(toolbarEl);
+}
+window.addEventListener('resize', updateViewerContentOffset);
+
 // Bascule entre le mode "accueil / bibliothèque" (entête classique, pas de
 // zoom) et le mode "visionneuse" (zoom natif activé, entête en overlay
 // caché par défaut, révélé au tap).
 function setViewerZoomMode(active) {
   setNativeZoomEnabled(active);
   document.body.classList.toggle('viewer-open', active);
+  updateViewerContentOffset();
   clearTimeout(headerHideTimeout);
   if (active) {
     updateHeaderViewportTransform();
@@ -1713,15 +1785,12 @@ function showFloatingHeader() {
   updateHeaderViewportTransform();
   toolbarEl.classList.add('header-visible');
   clearTimeout(headerHideTimeout);
-  // AJOUT : tant que la barre de recherche est ouverte, on ne programme pas
-  // la disparition automatique de l'entête. Sinon, une fois masqué,
-  // #search-bar (qui vit dans #header-wrap) disparaît avec lui alors que le
-  // clavier, lui, reste affiché : l'utilisateur se retrouve avec le clavier
-  // seul à l'écran, sans champ de recherche ni bouton pour le fermer.
-  if (searchBar && searchBar.classList.contains('active')) return;
-  headerHideTimeout = setTimeout(() => {
-    toolbarEl.classList.remove('header-visible');
-  }, 3000);
+  // CORRECTION : l'entête ne doit plus disparaître toute seule après un
+  // délai. Elle reste affichée en permanence, exactement comme lorsque la
+  // barre de recherche est active, jusqu'à ce que l'utilisateur tape
+  // explicitement sur le document pour la masquer (voir
+  // toggleFloatingHeader). On ne programme donc plus aucun minuteur de
+  // masquage automatique ici.
 }
 
 function toggleFloatingHeader() {
@@ -3616,6 +3685,12 @@ function renderHomeScreen() {
   homeSelectedIds.clear();
   isDocumentOpen = false;
   setViewerZoomMode(false);
+  // CORRECTION : sur l'écran d'accueil, le padding-top par défaut de
+  // .viewer-container (5px, prévu pour les documents) s'ajoutait à celui
+  // de la barre de recherche/tri en dessous de l'entête, creusant un
+  // espace vide visible. On le retire complètement ici (l'entête a déjà
+  // sa propre ombre portée pour se démarquer du contenu).
+  viewer.style.paddingTop = '0px';
   updateBackFabVisibility();
   updateTopBarButtons();
   const container = document.createElement('div');
@@ -3698,6 +3773,22 @@ function renderHomeScreen() {
   searchInput.addEventListener('input', () => {
     homeSearchQuery = searchInput.value;
     renderHomeFileList();
+  });
+  // CORRECTION : la barre de recherche de l'écran d'accueil s'activait (se
+  // mettait au focus, clavier ouvert) au premier appui mais un second appui
+  // dessus ne la désactivait pas (le focus natif d'un input déjà actif ne
+  // se retire pas tout seul au clic). On mémorise si le champ était déjà
+  // actif juste avant l'appui (via pointerdown, qui se déclenche avant que
+  // le clic ne (re)donne le focus) pour pouvoir le désactiver nous-mêmes
+  // au clic suivant si c'était déjà le cas.
+  let homeSearchWasFocused = false;
+  searchInput.addEventListener('pointerdown', () => {
+    homeSearchWasFocused = (document.activeElement === searchInput);
+  });
+  searchInput.addEventListener('click', () => {
+    if (homeSearchWasFocused) {
+      searchInput.blur();
+    }
   });
   const selectCounter = document.createElement('span');
   selectCounter.className = 'home-select-counter';
@@ -3865,6 +3956,33 @@ document.addEventListener('click', (e) => {
 overflowMenu.querySelector('label[for="file-input"]').addEventListener('click', () => {
   overflowMenu.classList.remove('active');
 });
+
+// CORRECTION : le menu ⋮ et le tiroir de filtre (TOUS/PDF/Word/Excel) sont
+// des dépliants sans fond opaque derrière eux. Si on scrolle la liste
+// pendant que l'un d'eux est ouvert, elle défile "sous" lui et il reste
+// affiché n'importe où à l'écran. On le referme donc dès le tout début du
+// geste de scroll (au moment du toucher, avant que le défilement ne
+// bouge quoi que ce soit), sauf si le toucher est sur le dépliant lui-même
+// (pour ne pas empêcher de cliquer sur ses options).
+function closeOpenDropdownsBeforeScroll(e) {
+  const target = e && e.target;
+  if (overflowMenu.classList.contains('active') && !(target && overflowMenu.contains(target))) {
+    overflowMenu.classList.remove('active');
+  }
+  if (currentHomeFilterRefs?.filterDropdown?.classList.contains('active')) {
+    const { filterBtn, filterDropdown } = currentHomeFilterRefs;
+    const insideDropdown = target && (filterDropdown.contains(target) || filterBtn.contains(target));
+    if (!insideDropdown) {
+      filterDropdown.classList.remove('active');
+      filterBtn.classList.remove('open');
+    }
+  }
+}
+viewer.addEventListener('touchstart', closeOpenDropdownsBeforeScroll, { passive: true });
+viewer.addEventListener('wheel', closeOpenDropdownsBeforeScroll, { passive: true });
+// Filet de sécurité : si un défilement se produit quand même (ex: scroll
+// programmatique), on referme aussi au cas où.
+viewer.addEventListener('scroll', () => closeOpenDropdownsBeforeScroll(null), { passive: true });
 
 // Affiche l'écran d'accueil dès le chargement de l'app.
 renderHomeScreen();
