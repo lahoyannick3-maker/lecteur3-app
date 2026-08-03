@@ -2505,33 +2505,39 @@ const htmlTableElement =
 // AJOUT : couleurs/gras/italique de police extraits manuellement du
 // xl/styles.xml (voir excelFontStylesHandlePromise plus haut), puisque
 // SheetJS (édition gratuite) ne fournit pas cette information via
-// excelCell.s. En cas d'échec (fichier inattendu, JSZip absent...), on
-// continue sans styliser le texte, MAIS on affiche un petit bandeau
-// visible (pas de console dev sur téléphone) pour comprendre pourquoi.
+// excelCell.s. On affiche TOUJOURS un petit bandeau de diagnostic (succès
+// ou échec) le temps de vérifier que le bon build tourne sur le téléphone
+// — pas de console dev disponible sur Android pour vérifier autrement.
+const FONT_STYLE_DEBUG_VERSION = 'v3';
 let fontStylesForSheet = {};
 let fontStyleDiagnostic = null;
 try {
   if (typeof JSZip === 'undefined') {
-    fontStyleDiagnostic = 'JSZip est introuvable (jszip.min.js absent/non chargé)';
+    fontStyleDiagnostic = 'JSZip introuvable (jszip.min.js absent/non chargé)';
   } else {
     const fontStylesHandle = await excelFontStylesHandlePromise;
     if (fontStylesHandle) {
       fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
+      fontStyleDiagnostic =
+        'OK — ' + Object.keys(fontStylesForSheet).length + ' cellule(s) stylée(s) trouvée(s)';
     } else {
-      fontStyleDiagnostic = 'extractExcelFontStyles a retourné null (voir console)';
+      fontStyleDiagnostic = 'extractExcelFontStyles a retourné null';
     }
   }
 } catch (fontStyleError) {
   fontStyleDiagnostic = 'Erreur : ' + fontStyleError.message;
   console.error('Couleurs de police Excel indisponibles :', fontStyleError);
 }
-if (fontStyleDiagnostic) {
+{
   const diagBanner = document.createElement('div');
+  const isOk = fontStyleDiagnostic && fontStyleDiagnostic.indexOf('OK') === 0;
   diagBanner.style.cssText =
-    'background:#fff3cd;color:#664d03;padding:6px 10px;font-size:12px;' +
-    'border-bottom:1px solid #ffe69c;';
+    'padding:6px 10px;font-size:12px;border-bottom:1px solid #ccc;' +
+    (isOk
+      ? 'background:#d1e7dd;color:#0f5132;'
+      : 'background:#fff3cd;color:#664d03;');
   diagBanner.textContent =
-    '⚠️ Couleurs de police indisponibles : ' + fontStyleDiagnostic;
+    '[' + FONT_STYLE_DEBUG_VERSION + '] Styles police : ' + fontStyleDiagnostic;
   Container.insertBefore(diagBanner, Container.firstChild);
 }
 
