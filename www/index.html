@@ -2359,6 +2359,36 @@ zoomWrapper.appendChild(
 Container
 );
 
+// AJOUT : double-tap pour basculer entre "vue normale" (défilement,
+// taille réelle) et "vue globale" (feuille réduite pour tenir en largeur
+// de l'écran, pour un aperçu d'ensemble) — sans bouton, pour ne pas
+// alourdir l'interface. `touch-action: manipulation` désactive le
+// double-tap-zoom NATIF du navigateur sur cette zone (pour éviter qu'il
+// se déclenche en même temps que le nôtre), tout en laissant le
+// pincement à 2 doigts fonctionner normalement, lui, par-dessus.
+Container.style.touchAction = 'manipulation';
+let excelGlobalView = false;
+function applyExcelZoomState() {
+  if (!excelGlobalView) {
+    Container.style.zoom = '';
+    return;
+  }
+  const table = Container.querySelector('table');
+  if (!table) return;
+  const naturalWidth = table.scrollWidth;
+  if (!naturalWidth) return;
+  const availableWidth = viewer.clientWidth - 10; // petite marge
+  const scale = Math.min(1, availableWidth / naturalWidth);
+  Container.style.zoom = scale;
+}
+Container.addEventListener('dblclick', () => {
+  excelGlobalView = !excelGlobalView;
+  applyExcelZoomState();
+});
+window.addEventListener('resize', () => {
+  if (excelGlobalView) applyExcelZoomState();
+});
+
 let activeSheetIndex = -1;
 
 function afficherFeuille(index) {
@@ -2714,6 +2744,10 @@ const style =
     }
   }
 }
+
+// Chaque changement d'onglet reconstruit le tableau (largeur potentiellement
+// différente) : on réapplique la "vue globale" si elle était active.
+requestAnimationFrame(applyExcelZoomState);
   } catch (error) {
 
     console.error(
