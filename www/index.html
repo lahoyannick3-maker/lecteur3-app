@@ -2251,6 +2251,29 @@ async function getLibraryIndex() {
     return index;
 }
 
+// État de module pour la vue "globale" (dézoomée) des fichiers Excel.
+// Un seul jeu de variables + un seul listener resize global (voir plus bas),
+// au lieu d'un par fichier ouvert, pour éviter toute fuite mémoire.
+let currentExcelContainer = null;
+let excelGlobalView = false;
+function applyExcelZoomState() {
+  if (!currentExcelContainer) return;
+  if (!excelGlobalView) {
+    currentExcelContainer.style.zoom = '';
+    return;
+  }
+  const table = currentExcelContainer.querySelector('table');
+  if (!table) return;
+  const naturalWidth = table.scrollWidth;
+  if (!naturalWidth) return;
+  const availableWidth = viewer.clientWidth - 10; // petite marge
+  const scale = Math.min(1, availableWidth / naturalWidth);
+  currentExcelContainer.style.zoom = scale;
+}
+window.addEventListener('resize', () => {
+  if (excelGlobalView) applyExcelZoomState();
+});
+
 function resetViewerState() {
   excelTabs.innerHTML = '';
   updateViewerContentOffset();
@@ -2275,6 +2298,8 @@ function resetViewerState() {
   currentPdfDoc = null;
   pageViewports = {};
   currentDocxRefs = null;
+  currentExcelContainer = null;
+  excelGlobalView = false;
 }
 
 function loadFileIntoViewer(file) {
@@ -2367,26 +2392,21 @@ Container
 // se déclenche en même temps que le nôtre), tout en laissant le
 // pincement à 2 doigts fonctionner normalement, lui, par-dessus.
 Container.style.touchAction = 'manipulation';
-let excelGlobalView = false;
-function applyExcelZoomState() {
-  if (!excelGlobalView) {
-    Container.style.zoom = '';
-    return;
-  }
-  const table = Container.querySelector('table');
-  if (!table) return;
-  const naturalWidth = table.scrollWidth;
-  if (!naturalWidth) return;
-  const availableWidth = viewer.clientWidth - 10; // petite marge
-  const scale = Math.min(1, availableWidth / naturalWidth);
-  Container.style.zoom = scale;
-}
+// CORRECTION (fuite mémoire) : Container et excelGlobalView vivaient avant
+// dans une closure recréée à CHAQUE ouverture de fichier Excel, avec un
+// window.addEventListener('resize', ...) ajouté à nouveau à chaque fois et
+// jamais retiré. Au fil d'une session avec plusieurs fichiers Excel ouverts,
+// ces listeners s'accumulaient indéfiniment sur `window`, chacun gardant une
+// référence vers l'ancien Container (détaché du DOM mais non libérable par le
+// GC à cause de cette référence). On utilise maintenant l'état de module
+// currentExcelContainer / excelGlobalView (déclarés plus haut) et un seul
+// listener global (voir plus bas dans le script) au lieu d'un par fichier.
+currentExcelContainer = Container;
+excelGlobalView = false;
+applyExcelZoomState();
 Container.addEventListener('dblclick', () => {
   excelGlobalView = !excelGlobalView;
   applyExcelZoomState();
-});
-window.addEventListener('resize', () => {
-  if (excelGlobalView) applyExcelZoomState();
 });
 
 let activeSheetIndex = -1;
@@ -5429,6 +5449,14 @@ document.addEventListener('visibilitychange', () => {
 
   function closeGame() {
     stopLoop();
+    // CORRECTION (fuite/robustesse) : si on quitte l'écran du jeu pendant le
+    // compte à rebours de reprise (3-2-1), l'intervalle continuait de tourner
+    // en arrière-plan et relançait la boucle du jeu (invisible) une fois fini.
+    if (resumeCountdownId) {
+      clearInterval(resumeCountdownId);
+      resumeCountdownId = null;
+    }
+    gameState = 'idle';
     gameScreen.classList.remove('active');
   }
 
