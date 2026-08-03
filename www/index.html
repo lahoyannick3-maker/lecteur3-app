@@ -1985,6 +1985,19 @@ function resolveExcelColor(colorObj) {
 // l'appli) pour lire xl/styles.xml (polices + correspondances de style)
 // et xl/workbook.xml (ordre des feuilles), afin de retrouver la couleur de
 // texte de chaque cellule.
+// AJOUT : recherche d'éléments tolérante aux préfixes d'espace de noms
+// (ex: <x:r>, <a:t>...). Certains fichiers .xlsx (notamment ceux
+// réenregistrés par des outils tiers) préfixent leurs balises ; un simple
+// getElementsByTagName('r') ne les trouverait pas et on croirait alors,
+// à tort, qu'il n'y a pas de texte enrichi. `localName` ignore le préfixe
+// quel qu'il soit, exactement comme le fait SheetJS en interne (avec des
+// regex tolérantes aux préfixes) pour cette même raison.
+function byLocalName(root, name) {
+  return Array.from(root.getElementsByTagName('*')).filter(
+    (el) => el.localName === name
+  );
+}
+
 async function extractExcelFontStyles(fileBytes) {
   try {
     const zip = await JSZip.loadAsync(fileBytes);
@@ -1998,10 +2011,10 @@ async function extractExcelFontStyles(fileBytes) {
     );
 
     // --- Table des polices : couleur / gras / italique, dans l'ordre. ---
-    const fontsParent = stylesDoc.getElementsByTagName('fonts')[0];
+    const fontsParent = byLocalName(stylesDoc, 'fonts')[0];
     const fonts = fontsParent
-      ? Array.from(fontsParent.children).map((fontNode) => {
-          const colorNode = fontNode.getElementsByTagName('color')[0];
+      ? byLocalName(fontsParent, 'font').map((fontNode) => {
+          const colorNode = byLocalName(fontNode, 'color')[0];
           let colorObj = null;
           if (colorNode) {
             const rgb = colorNode.getAttribute('rgb');
@@ -2018,8 +2031,8 @@ async function extractExcelFontStyles(fileBytes) {
           }
           return {
             color: colorObj,
-            bold: fontNode.getElementsByTagName('b').length > 0,
-            italic: fontNode.getElementsByTagName('i').length > 0
+            bold: byLocalName(fontNode, 'b').length > 0,
+            italic: byLocalName(fontNode, 'i').length > 0
           };
         })
       : [];
@@ -2028,12 +2041,61 @@ async function extractExcelFontStyles(fileBytes) {
     // un fontId. C'est CET index (l'attribut s="N" d'une cellule dans le
     // XML de la feuille) qu'il faut résoudre, PAS l'objet excelCell.s de
     // SheetJS qui a un sens différent. ---
-    const cellXfsParent = stylesDoc.getElementsByTagName('cellXfs')[0];
+    const cellXfsParent = byLocalName(stylesDoc, 'cellXfs')[0];
     const cellXfs = cellXfsParent
-      ? Array.from(cellXfsParent.children).map((xfNode) => ({
-          fontId: parseInt(xfNode.getAttribute('fontId') || '0', 10)
-        }))
+      ? byLocalName(cellXfsParent, 'xf')
+          .filter((xfNode) => xfNode.parentNode === cellXfsParent)
+          .map((xfNode) => ({
+            fontId: parseInt(xfNode.getAttribute('fontId') || '0', 10)
+          }))
       : [];
+
+    // --- Extrait couleur/gras/italique d'un noeud <rPr> (texte enrichi,
+    // que ce soit dans sharedStrings.xml ou une chaîne "inline"). ---
+    function readRunProps(rPrNode) {
+      if (!rPrNode) return { color: null, bold: false, italic: false };
+      const colorNode = byLocalName(rPrNode, 'color')[0];
+      let colorObj = null;
+      if (colorNode) {
+        const rgb = colorNode.getAttribute('rgb');
+        const theme = colorNode.getAttribute('theme');
+        const indexed = colorNode.getAttribute('indexed');
+        const tint = colorNode.getAttribute('tint');
+        if (rgb) {
+          colorObj = { rgb };
+        } else if (theme !== null) {
+          colorObj = { theme: parseInt(theme, 10), tint: tint ? parseFloat(tint) : 0 };
+        } else if (indexed !== null) {
+          colorObj = { indexed: parseInt(indexed, 10) };
+        }
+      }
+      return {
+        color: colorObj ? resolveExcelColor(colorObj) : null,
+        bold: byLocalName(rPrNode, 'b').length > 0,
+        italic: byLocalName(rPrNode, 'i').length > 0
+      };
+    }
+
+    // Découpe un noeud <si> (sharedStrings) ou <is> (inline) en runs
+    // colorés individuellement, ou null si texte simple sans mise en forme
+    // par fragment (dans ce cas, seul le style de la cellule s'applique).
+    function readRichRuns(containerNode) {
+      const runNodes = byLocalName(containerNode, 'r').filter(
+        (r) => r.parentNode === containerNode
+      );
+      if (runNodes.length === 0) return null;
+      return runNodes.map((runNode) => {
+        const textNode = byLocalName(runNode, 't')[0];
+        const rPr = byLocalName(runNode, 'rPr')[0];
+        const props = readRunProps(rPr);
+        return {
+          text: textNode ? textNode.textContent : '',
+          color: props.color,
+          bold: props.bold,
+          italic: props.italic
+        };
+      });
+    }
 
     // --- Chaîne de texte partagées (sharedStrings.xml) : quand on colore
     // le texte d'une cellule via la palette "Couleur de police" d'Excel,
@@ -2049,43 +2111,7 @@ async function extractExcelFontStyles(fileBytes) {
         await sharedStringsEntry.async('text'),
         'application/xml'
       );
-      sharedStrings = Array.from(sharedStringsDoc.getElementsByTagName('si')).map((siNode) => {
-        const runNodes = Array.from(siNode.getElementsByTagName('r'));
-        // Pas de runs enrichis : texte simple, uniquement stylé par la
-        // cellule (déjà géré ci-dessus) -> rien à ajouter ici.
-        if (runNodes.length === 0) return null;
-        return runNodes.map((runNode) => {
-          const textNode = runNode.getElementsByTagName('t')[0];
-          const rPr = runNode.getElementsByTagName('rPr')[0];
-          let colorObj = null;
-          let bold = false;
-          let italic = false;
-          if (rPr) {
-            const colorNode = rPr.getElementsByTagName('color')[0];
-            if (colorNode) {
-              const rgb = colorNode.getAttribute('rgb');
-              const theme = colorNode.getAttribute('theme');
-              const indexed = colorNode.getAttribute('indexed');
-              const tint = colorNode.getAttribute('tint');
-              if (rgb) {
-                colorObj = { rgb };
-              } else if (theme !== null) {
-                colorObj = { theme: parseInt(theme, 10), tint: tint ? parseFloat(tint) : 0 };
-              } else if (indexed !== null) {
-                colorObj = { indexed: parseInt(indexed, 10) };
-              }
-            }
-            bold = rPr.getElementsByTagName('b').length > 0;
-            italic = rPr.getElementsByTagName('i').length > 0;
-          }
-          return {
-            text: textNode ? textNode.textContent : '',
-            color: colorObj ? resolveExcelColor(colorObj) : null,
-            bold,
-            italic
-          };
-        });
-      });
+      sharedStrings = byLocalName(sharedStringsDoc, 'si').map(readRichRuns);
     }
 
     // --- Correspondance feuille -> fichier XML, dans l'ordre de
@@ -2104,11 +2130,11 @@ async function extractExcelFontStyles(fileBytes) {
           await relsEntry.async('text'),
           'application/xml'
         );
-        Array.from(relsDoc.getElementsByTagName('Relationship')).forEach((rel) => {
+        byLocalName(relsDoc, 'Relationship').forEach((rel) => {
           relIdToTarget[rel.getAttribute('Id')] = rel.getAttribute('Target');
         });
       }
-      sheetPaths = Array.from(workbookDoc.getElementsByTagName('sheet')).map((sheetNode) => {
+      sheetPaths = byLocalName(workbookDoc, 'sheet').map((sheetNode) => {
         const rId =
           sheetNode.getAttribute('r:id') ||
           sheetNode.getAttributeNS(
@@ -2138,7 +2164,7 @@ async function extractExcelFontStyles(fileBytes) {
         'application/xml'
       );
       const result = {};
-      Array.from(sheetDoc.getElementsByTagName('c')).forEach((cellNode) => {
+      byLocalName(sheetDoc, 'c').forEach((cellNode) => {
         const address = cellNode.getAttribute('r');
         if (!address) return;
 
@@ -2154,16 +2180,20 @@ async function extractExcelFontStyles(fileBytes) {
           }
         }
 
-        // Si la cellule référence une chaîne partagée en texte enrichi
-        // (runs colorés indépendamment du style de cellule), on la
-        // récupère pour reconstruire le texte avec ses vraies couleurs.
+        // Texte enrichi : soit une référence vers sharedStrings.xml
+        // (t="s"), soit une chaîne "inline" directement dans la cellule
+        // (t="inlineStr", plus rare mais possible).
         let richRuns = null;
-        if (cellNode.getAttribute('t') === 's') {
-          const vNode = cellNode.getElementsByTagName('v')[0];
+        const cellType = cellNode.getAttribute('t');
+        if (cellType === 's') {
+          const vNode = byLocalName(cellNode, 'v')[0];
           const ssIndex = vNode ? parseInt(vNode.textContent, 10) : NaN;
           if (!isNaN(ssIndex) && sharedStrings[ssIndex]) {
             richRuns = sharedStrings[ssIndex];
           }
+        } else if (cellType === 'inlineStr') {
+          const isNode = byLocalName(cellNode, 'is')[0];
+          if (isNode) richRuns = readRichRuns(isNode);
         }
 
         if (!cellColor && !cellBold && !cellItalic && !richRuns) return;
@@ -2475,16 +2505,34 @@ const htmlTableElement =
 // AJOUT : couleurs/gras/italique de police extraits manuellement du
 // xl/styles.xml (voir excelFontStylesHandlePromise plus haut), puisque
 // SheetJS (édition gratuite) ne fournit pas cette information via
-// excelCell.s. En cas d'échec (fichier inattendu, etc.), on continue
-// simplement sans styliser le texte plutôt que de casser tout l'affichage.
+// excelCell.s. En cas d'échec (fichier inattendu, JSZip absent...), on
+// continue sans styliser le texte, MAIS on affiche un petit bandeau
+// visible (pas de console dev sur téléphone) pour comprendre pourquoi.
 let fontStylesForSheet = {};
+let fontStyleDiagnostic = null;
 try {
-  const fontStylesHandle = await excelFontStylesHandlePromise;
-  if (fontStylesHandle) {
-    fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
+  if (typeof JSZip === 'undefined') {
+    fontStyleDiagnostic = 'JSZip est introuvable (jszip.min.js absent/non chargé)';
+  } else {
+    const fontStylesHandle = await excelFontStylesHandlePromise;
+    if (fontStylesHandle) {
+      fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
+    } else {
+      fontStyleDiagnostic = 'extractExcelFontStyles a retourné null (voir console)';
+    }
   }
 } catch (fontStyleError) {
+  fontStyleDiagnostic = 'Erreur : ' + fontStyleError.message;
   console.error('Couleurs de police Excel indisponibles :', fontStyleError);
+}
+if (fontStyleDiagnostic) {
+  const diagBanner = document.createElement('div');
+  diagBanner.style.cssText =
+    'background:#fff3cd;color:#664d03;padding:6px 10px;font-size:12px;' +
+    'border-bottom:1px solid #ffe69c;';
+  diagBanner.textContent =
+    '⚠️ Couleurs de police indisponibles : ' + fontStyleDiagnostic;
+  Container.insertBefore(diagBanner, Container.firstChild);
 }
 
 if (htmlTableElement) {
