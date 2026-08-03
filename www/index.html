@@ -1787,10 +1787,24 @@ function updateViewerContentOffset() {
   if (!toolbarEl || !viewer) return;
   if (!document.body.classList.contains('viewer-open')) {
     viewer.style.paddingTop = '';
+    if (excelTabs) excelTabs.style.paddingTop = '';
     return;
   }
   const scale = (window.visualViewport && window.visualViewport.scale) || 1;
-  viewer.style.paddingTop = ((toolbarEl.offsetHeight + 5) / scale) + 'px';
+  const offset = ((toolbarEl.offsetHeight + 5) / scale) + 'px';
+  // CORRECTION : quand des onglets Excel sont affichés, ils sont le tout
+  // premier élément du flux (juste après #header-wrap, passé en position
+  // fixed) : c'est donc EUX qui doivent recevoir l'espace réservé pour
+  // l'entête, sinon ils restent collés en haut de l'écran et se retrouvent
+  // cachés sous l'entête flottant. #viewer, qui les suit juste en dessous
+  // dans le flux normal, n'a alors plus besoin de son propre padding.
+  if (excelTabs && excelTabs.childElementCount > 0) {
+    excelTabs.style.paddingTop = offset;
+    viewer.style.paddingTop = '';
+  } else {
+    if (excelTabs) excelTabs.style.paddingTop = '';
+    viewer.style.paddingTop = offset;
+  }
 }
 if (toolbarEl && window.ResizeObserver) {
   new ResizeObserver(updateViewerContentOffset).observe(toolbarEl);
@@ -1870,6 +1884,302 @@ viewer.addEventListener('touchend', (e) => {
   }
 }, { passive: true });
 
+// AJOUT : résolution des couleurs Excel basées sur le thème.
+// Beaucoup de fichiers Excel n'enregistrent pas une couleur "RGB" explicite
+// pour les remplissages/textes : ils référencent une couleur du THEME du
+// classeur (ex: "Accent 1") + un "tint" (éclaircissement/assombrissement),
+// par exemple quand on choisit une couleur dans la section "Couleurs du
+// thème" du sélecteur Excel plutôt que dans "Couleurs standard". Le code
+// précédent ne lisait que `fgColor.rgb`, donc ces cellules restaient sans
+// couleur. On calcule ici la couleur réelle à partir de l'index de thème +
+// tint, en utilisant la palette par défaut du thème Office (utilisée par
+// l'immense majorité des fichiers, sauf thème personnalisé).
+const DEFAULT_OFFICE_THEME_COLORS = [
+  'FFFFFF', // 0 = Arrière-plan 1 (lt1)
+  '000000', // 1 = Texte 1 (dk1)
+  'E7E6E6', // 2 = Arrière-plan 2 (lt2)
+  '44546A', // 3 = Texte 2 (dk2)
+  '4472C4', // 4 = Accent 1
+  'ED7D31', // 5 = Accent 2
+  'A5A5A5', // 6 = Accent 3
+  'FFC000', // 7 = Accent 4
+  '5B9BD5', // 8 = Accent 5
+  '70AD47', // 9 = Accent 6
+  '0563C1', // 10 = Lien hypertexte
+  '954F72'  // 11 = Lien visité
+];
+// Palette indexée héritée (utilisée seulement pour quelques cas courants ;
+// 64 correspond à "automatique", c'est-à-dire "pas de couleur explicite").
+const LEGACY_INDEXED_COLORS = {
+  0: '000000', 1: 'FFFFFF', 2: 'FF0000', 3: '00FF00',
+  4: '0000FF', 5: 'FFFF00', 6: 'FF00FF', 7: '00FFFF'
+};
+function hexToRgbArray(hex) {
+  const clean = hex.replace('#', '');
+  return [
+    parseInt(clean.substring(0, 2), 16),
+    parseInt(clean.substring(2, 4), 16),
+    parseInt(clean.substring(4, 6), 16)
+  ];
+}
+function rgbArrayToHex(rgb) {
+  return rgb.map(v => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0')).join('');
+}
+// Applique un "tint" (formule ECMA-376) à une couleur hex, en travaillant
+// dans l'espace HSL pour éclaircir/assombrir sans changer la teinte.
+function applyExcelTint(hex, tint) {
+  if (!tint) return hex;
+  const [r, g, b] = hexToRgbArray(hex).map(v => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d !== 0) {
+    s = d / (1 - Math.abs(2 * l - 1));
+    switch (max) {
+      case r: h = ((g - b) / d) % 6; break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const newL = tint < 0 ? l * (1 + tint) : l * (1 - tint) + tint;
+  const c = (1 - Math.abs(2 * newL - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = newL - c / 2;
+  let rp = 0, gp = 0, bp = 0;
+  if (h < 60) { rp = c; gp = x; bp = 0; }
+  else if (h < 120) { rp = x; gp = c; bp = 0; }
+  else if (h < 180) { rp = 0; gp = c; bp = x; }
+  else if (h < 240) { rp = 0; gp = x; bp = c; }
+  else if (h < 300) { rp = x; gp = 0; bp = c; }
+  else { rp = c; gp = 0; bp = x; }
+  return rgbArrayToHex([(rp + m) * 255, (gp + m) * 255, (bp + m) * 255]);
+}
+// Résout un objet couleur SheetJS (fgColor/color) en couleur hex utilisable,
+// que la couleur soit explicite (rgb), issue du thème (theme + tint), ou de
+// l'ancienne palette indexée. Retourne null si aucune couleur exploitable.
+function resolveExcelColor(colorObj) {
+  if (!colorObj) return null;
+  if (colorObj.rgb) {
+    return '#' + colorObj.rgb.slice(-6);
+  }
+  if (colorObj.theme !== undefined && colorObj.theme !== null) {
+    const base = DEFAULT_OFFICE_THEME_COLORS[colorObj.theme];
+    if (!base) return null;
+    return '#' + applyExcelTint(base, colorObj.tint || 0);
+  }
+  if (colorObj.indexed !== undefined && colorObj.indexed !== 64 && LEGACY_INDEXED_COLORS[colorObj.indexed]) {
+    return '#' + LEGACY_INDEXED_COLORS[colorObj.indexed];
+  }
+  return null;
+}
+
+// AJOUT : extraction manuelle des couleurs/gras/italique de police Excel.
+// SheetJS (édition gratuite, celle utilisée ici) ne lit QUE le remplissage
+// de fond des cellules (fgColor/patternType) ; la police (couleur, gras,
+// italique) est réservée à la version payante ("Pro") de la librairie,
+// même avec cellStyles:true. Comme un fichier .xlsx est en réalité un
+// simple zip, on le décompresse nous-mêmes avec JSZip (déjà chargé dans
+// l'appli) pour lire xl/styles.xml (polices + correspondances de style)
+// et xl/workbook.xml (ordre des feuilles), afin de retrouver la couleur de
+// texte de chaque cellule.
+async function extractExcelFontStyles(fileBytes) {
+  try {
+    const zip = await JSZip.loadAsync(fileBytes);
+    const parser = new DOMParser();
+
+    const stylesEntry = zip.file('xl/styles.xml');
+    if (!stylesEntry) return null;
+    const stylesDoc = parser.parseFromString(
+      await stylesEntry.async('text'),
+      'application/xml'
+    );
+
+    // --- Table des polices : couleur / gras / italique, dans l'ordre. ---
+    const fontsParent = stylesDoc.getElementsByTagName('fonts')[0];
+    const fonts = fontsParent
+      ? Array.from(fontsParent.children).map((fontNode) => {
+          const colorNode = fontNode.getElementsByTagName('color')[0];
+          let colorObj = null;
+          if (colorNode) {
+            const rgb = colorNode.getAttribute('rgb');
+            const theme = colorNode.getAttribute('theme');
+            const indexed = colorNode.getAttribute('indexed');
+            const tint = colorNode.getAttribute('tint');
+            if (rgb) {
+              colorObj = { rgb };
+            } else if (theme !== null) {
+              colorObj = { theme: parseInt(theme, 10), tint: tint ? parseFloat(tint) : 0 };
+            } else if (indexed !== null) {
+              colorObj = { indexed: parseInt(indexed, 10) };
+            }
+          }
+          return {
+            color: colorObj,
+            bold: fontNode.getElementsByTagName('b').length > 0,
+            italic: fontNode.getElementsByTagName('i').length > 0
+          };
+        })
+      : [];
+
+    // --- Table des styles de cellule (cellXfs) : chaque entrée référence
+    // un fontId. C'est CET index (l'attribut s="N" d'une cellule dans le
+    // XML de la feuille) qu'il faut résoudre, PAS l'objet excelCell.s de
+    // SheetJS qui a un sens différent. ---
+    const cellXfsParent = stylesDoc.getElementsByTagName('cellXfs')[0];
+    const cellXfs = cellXfsParent
+      ? Array.from(cellXfsParent.children).map((xfNode) => ({
+          fontId: parseInt(xfNode.getAttribute('fontId') || '0', 10)
+        }))
+      : [];
+
+    // --- Chaîne de texte partagées (sharedStrings.xml) : quand on colore
+    // le texte d'une cellule via la palette "Couleur de police" d'Excel,
+    // cette couleur est très souvent enregistrée comme un "run" de texte
+    // enrichi DANS sharedStrings.xml (une couleur par fragment de texte),
+    // et PAS dans le style de la cellule elle-même (cellXfs/font). C'est ce
+    // qui explique que certaines cellules gardent une couleur alors que la
+    // police de la cellule (ci-dessus) n'en indique aucune. ---
+    const sharedStringsEntry = zip.file('xl/sharedStrings.xml');
+    let sharedStrings = [];
+    if (sharedStringsEntry) {
+      const sharedStringsDoc = parser.parseFromString(
+        await sharedStringsEntry.async('text'),
+        'application/xml'
+      );
+      sharedStrings = Array.from(sharedStringsDoc.getElementsByTagName('si')).map((siNode) => {
+        const runNodes = Array.from(siNode.getElementsByTagName('r'));
+        // Pas de runs enrichis : texte simple, uniquement stylé par la
+        // cellule (déjà géré ci-dessus) -> rien à ajouter ici.
+        if (runNodes.length === 0) return null;
+        return runNodes.map((runNode) => {
+          const textNode = runNode.getElementsByTagName('t')[0];
+          const rPr = runNode.getElementsByTagName('rPr')[0];
+          let colorObj = null;
+          let bold = false;
+          let italic = false;
+          if (rPr) {
+            const colorNode = rPr.getElementsByTagName('color')[0];
+            if (colorNode) {
+              const rgb = colorNode.getAttribute('rgb');
+              const theme = colorNode.getAttribute('theme');
+              const indexed = colorNode.getAttribute('indexed');
+              const tint = colorNode.getAttribute('tint');
+              if (rgb) {
+                colorObj = { rgb };
+              } else if (theme !== null) {
+                colorObj = { theme: parseInt(theme, 10), tint: tint ? parseFloat(tint) : 0 };
+              } else if (indexed !== null) {
+                colorObj = { indexed: parseInt(indexed, 10) };
+              }
+            }
+            bold = rPr.getElementsByTagName('b').length > 0;
+            italic = rPr.getElementsByTagName('i').length > 0;
+          }
+          return {
+            text: textNode ? textNode.textContent : '',
+            color: colorObj ? resolveExcelColor(colorObj) : null,
+            bold,
+            italic
+          };
+        });
+      });
+    }
+
+    // --- Correspondance feuille -> fichier XML, dans l'ordre de
+    // workbook.SheetNames (même ordre que les éléments <sheet> ici). ---
+    const workbookEntry = zip.file('xl/workbook.xml');
+    const relsEntry = zip.file('xl/_rels/workbook.xml.rels');
+    let sheetPaths = [];
+    if (workbookEntry) {
+      const workbookDoc = parser.parseFromString(
+        await workbookEntry.async('text'),
+        'application/xml'
+      );
+      const relIdToTarget = {};
+      if (relsEntry) {
+        const relsDoc = parser.parseFromString(
+          await relsEntry.async('text'),
+          'application/xml'
+        );
+        Array.from(relsDoc.getElementsByTagName('Relationship')).forEach((rel) => {
+          relIdToTarget[rel.getAttribute('Id')] = rel.getAttribute('Target');
+        });
+      }
+      sheetPaths = Array.from(workbookDoc.getElementsByTagName('sheet')).map((sheetNode) => {
+        const rId =
+          sheetNode.getAttribute('r:id') ||
+          sheetNode.getAttributeNS(
+            'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+            'id'
+          );
+        const target = rId ? relIdToTarget[rId] : null;
+        if (!target) return null;
+        return target.startsWith('/') ? target.slice(1) : ('xl/' + target);
+      });
+    }
+
+    // --- Extraction paresseuse (à la demande) des styles de police d'une
+    // feuille, avec mise en cache pour ne pas reparser à chaque clic
+    // d'onglet. ---
+    const cache = {};
+    async function getFontStylesForSheet(sheetIndex) {
+      if (cache[sheetIndex]) return cache[sheetIndex];
+      const path = sheetPaths[sheetIndex];
+      const sheetEntry = path && zip.file(path);
+      if (!sheetEntry) {
+        cache[sheetIndex] = {};
+        return cache[sheetIndex];
+      }
+      const sheetDoc = parser.parseFromString(
+        await sheetEntry.async('text'),
+        'application/xml'
+      );
+      const result = {};
+      Array.from(sheetDoc.getElementsByTagName('c')).forEach((cellNode) => {
+        const address = cellNode.getAttribute('r');
+        if (!address) return;
+
+        const styleIndexRaw = cellNode.getAttribute('s');
+        let cellColor = null, cellBold = false, cellItalic = false;
+        if (styleIndexRaw !== null) {
+          const xf = cellXfs[parseInt(styleIndexRaw, 10)];
+          const font = xf ? fonts[xf.fontId] : null;
+          if (font) {
+            cellColor = font.color ? resolveExcelColor(font.color) : null;
+            cellBold = font.bold;
+            cellItalic = font.italic;
+          }
+        }
+
+        // Si la cellule référence une chaîne partagée en texte enrichi
+        // (runs colorés indépendamment du style de cellule), on la
+        // récupère pour reconstruire le texte avec ses vraies couleurs.
+        let richRuns = null;
+        if (cellNode.getAttribute('t') === 's') {
+          const vNode = cellNode.getElementsByTagName('v')[0];
+          const ssIndex = vNode ? parseInt(vNode.textContent, 10) : NaN;
+          if (!isNaN(ssIndex) && sharedStrings[ssIndex]) {
+            richRuns = sharedStrings[ssIndex];
+          }
+        }
+
+        if (!cellColor && !cellBold && !cellItalic && !richRuns) return;
+        result[address] = { color: cellColor, bold: cellBold, italic: cellItalic, richRuns };
+      });
+      cache[sheetIndex] = result;
+      return result;
+    }
+
+    return { getFontStylesForSheet };
+  } catch (error) {
+    console.error('Extraction des styles de police Excel impossible :', error);
+    return null;
+  }
+}
+
 const zoomWrapper = document.getElementById('zoom-wrapper');
 const docTitle = document.getElementById('doc-title');
 const excelTabs = document.getElementById('excel-tabs');
@@ -1913,6 +2223,7 @@ async function getLibraryIndex() {
 
 function resetViewerState() {
   excelTabs.innerHTML = '';
+  updateViewerContentOffset();
   closeSearch(); // Ferme et réinitialise la recherche à chaque nouveau fichier
     // Si un PDF était déjà ouvert, on le détruit proprement pour libérer la RAM
   if (currentPdfDoc) {
@@ -1993,33 +2304,417 @@ function loadFileIntoViewer(file) {
     showScrollFabs();
 });
 }
-   // 3. EXCEL        
-    else if (currentFileExtension === 'xlsx') {
-      const data = new Uint8Array(this.result);
-      const workbook = XLSX.read(data, { type: 'array' });
-      workbook.SheetNames.forEach((sheetName, index) => {
-        const tabButton = document.createElement('button');
-        tabButton.className = 'sheet-button' + (index === 0 ? ' active' : '');
-        tabButton.textContent = sheetName;
-        excelTabs.appendChild(tabButton);
-        const worksheet = workbook.Sheets[sheetName];
-        const htmlTable = XLSX.utils.sheet_to_html(worksheet);
-        const wrapper = document.createElement('div');
-        wrapper.className = 'document-wrapper';
-        wrapper.innerHTML = htmlTable;
-        wrapper.style.display = index === 0 ? 'block' : 'none';
-        zoomWrapper.appendChild(wrapper);
-        tabButton.addEventListener('click', () => {
-          document.querySelectorAll('.sheet-button').forEach(btn => btn.classList.remove('active'));
-          tabButton.classList.add('active');
-          
-          document.querySelectorAll('.viewer-container .document-wrapper').forEach((wrap, wIdx) => {
-            wrap.style.display = wIdx === index ? 'block' : 'none';
-          });
-        });
-      });
+   // 3. EXCEL
+else if (currentFileExtension === 'xlsx') {
+
+const data = new Uint8Array(this.result);
+const workbook = XLSX.read(data, {
+  type: 'array',
+  cellStyles: true
+});
+// AJOUT : SheetJS (édition gratuite) ne lit PAS les couleurs de police
+// (uniquement le remplissage de fond). Pour afficher aussi le texte coloré
+// (comme le fait l'autre lecteur comparé), on parse nous-mêmes le
+// xl/styles.xml du fichier .xlsx (qui est un simple zip) via JSZip, déjà
+// chargé dans l'appli. Ceci est fait une seule fois par fichier ouvert ;
+// voir extractExcelFontStyles() plus haut dans le script.
+const excelFontStylesHandlePromise = extractExcelFontStyles(data);
+// Un seul conteneur est utilisé pour afficher la feuille active.
+// Les autres feuilles ne sont pas converties en HTML à l'ouverture.
+const Container =
+document.createElement('div');
+Container.className =
+'document-wrapper';
+zoomWrapper.appendChild(
+Container
+);
+
+let activeSheetIndex = -1;
+
+function afficherFeuille(index) {
+
+// Ne recharge pas une feuille déjà affichée.
+if (activeSheetIndex === index) {
+  return;
+}
+
+activeSheetIndex = index;
+
+// Met à jour l'apparence des onglets.
+document
+  .querySelectorAll('.sheet-button')
+  .forEach((button, buttonIndex) => {
+
+    button.classList.toggle(
+      'active',
+      buttonIndex === index
+    );
+  });
+
+// Affiche immédiatement le message avant le traitement.
+Container.innerHTML = `
+  <p class="loading">
+    Chargement de la feuille…
+  </p>
+`;
+
+// Laisse Android afficher le message avant de commencer
+// la conversion de la feuille.
+setTimeout(async () => {
+
+  try {
+
+    const sheetName =
+      workbook.SheetNames[index];
+
+    const worksheet =
+      workbook.Sheets[sheetName];
+     
+    if (!worksheet) {
+
+      Container.innerHTML = `
+        <p class="info-text">
+          Impossible de lire cette feuille.
+        </p>
+      `;
+
+      return;
     }
-  }; // <--- C'EST CETTE FERMETURE QUI MANQUAIT (pour le fileReader.onload)
+
+    // Détermine la dernière ligne et la dernière colonne
+    // contenant réellement une valeur.
+    let lastUsefulRow = 0;
+    let lastUsefulColumn = 0;
+    let hasUsefulCell = false;
+
+    Object.keys(worksheet).forEach(
+      (cellAddress) => {
+
+        // Les propriétés commençant par "!"
+        // sont des informations internes.
+        if (
+          cellAddress.startsWith('!')
+        ) {
+          return;
+        }
+
+        const cell =
+          worksheet[cellAddress];
+
+        if (
+          cell &&
+          cell.v !== undefined &&
+          cell.v !== null &&
+          String(cell.v).trim() !== ''
+        ) {
+
+          const position =
+            XLSX.utils.decode_cell(
+              cellAddress
+            );
+
+          lastUsefulRow = Math.max(
+            lastUsefulRow,
+            position.r
+          );
+
+          lastUsefulColumn = Math.max(
+            lastUsefulColumn,
+            position.c
+          );
+
+          hasUsefulCell = true;
+        }
+      }
+    );
+
+    // Feuille vide.
+    if (!hasUsefulCell) {
+
+      Container.innerHTML = `
+        <p class="info-text">
+          Cette feuille est vide.
+        </p>
+      `;
+
+      return;
+    }
+
+    // Crée une plage limitée aux cellules utiles.
+    const usefulRange = {
+
+      s: {
+        r: 0,
+        c: 0
+      },
+
+      e: {
+        r: lastUsefulRow,
+        c: lastUsefulColumn
+      }
+    };
+
+    // Convertit uniquement la feuille sélectionnée
+    // et uniquement sa zone utile.
+    const htmlTable =
+  XLSX.utils.sheet_to_html(
+    worksheet,
+    {
+      range: usefulRange
+    }
+  );
+
+Container.innerHTML =
+  htmlTable;
+// Applique les styles Excel aux cellules HTML.
+const htmlTableElement =
+  Container.querySelector(
+    'table'
+  );
+
+// AJOUT : couleurs/gras/italique de police extraits manuellement du
+// xl/styles.xml (voir excelFontStylesHandlePromise plus haut), puisque
+// SheetJS (édition gratuite) ne fournit pas cette information via
+// excelCell.s. En cas d'échec (fichier inattendu, etc.), on continue
+// simplement sans styliser le texte plutôt que de casser tout l'affichage.
+let fontStylesForSheet = {};
+try {
+  const fontStylesHandle = await excelFontStylesHandlePromise;
+  if (fontStylesHandle) {
+    fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
+  }
+} catch (fontStyleError) {
+  console.error('Couleurs de police Excel indisponibles :', fontStyleError);
+}
+
+if (htmlTableElement) {
+  for (
+    let row = usefulRange.s.r;
+    row <= usefulRange.e.r;
+    row++
+  ) {
+
+    for (
+      let column = usefulRange.s.c;
+      column <= usefulRange.e.c;
+      column++
+    ) {
+
+      const cellAddress =
+        XLSX.utils.encode_cell({
+          r: row,
+          c: column
+        });
+
+      const excelCell =
+        worksheet[cellAddress];
+
+   const htmlRow =
+        htmlTableElement.rows[
+          row - usefulRange.s.r
+        ];
+
+      if (!htmlRow) {
+        continue;
+      }
+
+      const htmlCell =
+        htmlRow.cells[
+          column - usefulRange.s.c
+        ];
+
+      if (!htmlCell) {
+        continue;
+      }
+
+// AJOUT : les styles de police extraits manuellement (voir plus haut) pour
+// cette cellule, indépendants de excelCell.s (qui ne contient jamais
+// d'info de police en édition gratuite de SheetJS).
+const manualFontStyle = fontStylesForSheet[cellAddress];
+
+// Le contrôle normal vient seulement après. On ne saute la cellule que si
+// NI le style SheetJS (fond, etc.) NI le style de police manuel n'existent.
+if (
+  (!excelCell || !excelCell.s) &&
+  !manualFontStyle
+) {
+  continue;
+}
+
+const style =
+  (excelCell && excelCell.s) || {};
+      // IMPORTANT : à la LECTURE (contrairement à l'écriture), SheetJS ne
+      // place PAS fgColor/patternType dans un sous-objet "fill" : ils sont
+      // directement sur `excelCell.s` (ex: { patternType: 'solid', fgColor:
+      // {...}, bgColor: {...} }). Le code cherchait `style.fill.fgColor`,
+      // qui n'existe jamais en lecture -> AUCUNE couleur n'était jamais
+      // appliquée. On accepte donc les deux formes (flat en priorité,
+      // nested en repli) pour rester robuste si le comportement de la
+      // librairie change.
+      const fillInfo = (style.fgColor || style.patternType) ? style : (style.fill || {});
+      // Couleur de fond (uniquement si un remplissage est réellement
+      // appliqué : certaines cellules gardent une couleur "fgColor" en
+      // mémoire même sans remplissage visible, tant que patternType
+      // n'est pas 'solid' ou absent, ça ne doit rien colorer).
+      if (
+        fillInfo.fgColor &&
+        (!fillInfo.patternType || fillInfo.patternType === 'solid')
+      ) {
+        const bg = resolveExcelColor(fillInfo.fgColor);
+        if (bg) {
+          htmlCell.style.backgroundColor = bg;
+        }
+      }
+
+      // Texte en couleurs multiples (runs enrichis) : reconstruit le
+      // contenu de la cellule avec un <span> par fragment, chacun ayant
+      // sa propre couleur/gras/italique — c'est le cas le plus fidèle à
+      // ce que fait Excel quand seule une partie du texte (ou le texte
+      // entier via la palette "Couleur de police") est colorée.
+      const hasRichRuns =
+        manualFontStyle &&
+        manualFontStyle.richRuns &&
+        manualFontStyle.richRuns.length > 0;
+
+      if (hasRichRuns) {
+        htmlCell.innerHTML = manualFontStyle.richRuns
+          .map((run) => {
+            const runStyles = [];
+            if (run.color) runStyles.push('color:' + run.color);
+            if (run.bold) runStyles.push('font-weight:bold');
+            if (run.italic) runStyles.push('font-style:italic');
+            const escapedText = (run.text || '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;');
+            return runStyles.length
+              ? `<span style="${runStyles.join(';')}">${escapedText}</span>`
+              : escapedText;
+          })
+          .join('');
+      }
+
+      // Couleur du texte : priorité au style extrait manuellement du XML
+      // (fonctionne réellement), repli sur style.font.color de SheetJS
+      // (ne se déclenche jamais aujourd'hui en édition gratuite, mais
+      // gardé par sécurité si la librairie évolue). Ignoré si on vient de
+      // reconstruire le texte en runs colorés individuellement ci-dessus.
+      if (hasRichRuns) {
+        // Rien à faire : chaque <span> porte déjà sa propre couleur.
+      } else if (manualFontStyle && manualFontStyle.color) {
+        htmlCell.style.color = manualFontStyle.color;
+      } else if (style.font && style.font.color) {
+        const fg = resolveExcelColor(style.font.color);
+        if (fg) {
+          htmlCell.style.color = fg;
+        }
+      }
+
+      // Texte en gras (idem : manuel en priorité, SheetJS en repli).
+      if (
+        !hasRichRuns &&
+        ((manualFontStyle && manualFontStyle.bold) ||
+        (style.font && style.font.bold))
+      ) {
+
+        htmlCell.style.fontWeight =
+          'bold';
+      }
+
+      // Texte en italique.
+      if (
+
+        !hasRichRuns &&
+        ((manualFontStyle && manualFontStyle.italic) ||
+        (style.font && style.font.italic))
+      ) {
+
+        htmlCell.style.fontStyle =
+          'italic';
+      }
+
+      // Alignement horizontal.
+      if (
+        style.alignment &&
+        style.alignment.horizontal
+      ) {
+
+        htmlCell.style.textAlign =
+          style.alignment.horizontal;
+      }
+
+      // Alignement vertical.
+      if (
+        style.alignment &&
+        style.alignment.vertical
+      ) {
+
+        htmlCell.style.verticalAlign =
+          style.alignment.vertical;
+      }
+    }
+  }
+}
+  } catch (error) {
+
+    console.error(
+      'Erreur lors du rendu Excel :',
+      error
+    );
+
+    Container.innerHTML = `
+      <p class="info-text">
+        Impossible d'afficher cette feuille.
+      </p>
+    `;
+  }
+
+}, 50);
+
+}
+
+// Ici, on crée seulement les boutons des feuilles.
+// Aucun tableau Excel n'est encore généré.
+workbook.SheetNames.forEach(
+(sheetName, index) => {
+
+  const tabButton =
+    document.createElement(
+      'button'
+    );
+
+  tabButton.className =
+    'sheet-button';
+
+  tabButton.textContent =
+    sheetName;
+
+  tabButton.addEventListener(
+    'click',
+    () => {
+
+      afficherFeuille(index);
+    }
+  );
+
+  excelTabs.appendChild(
+    tabButton
+  );
+}
+
+);
+
+// CORRECTION : les onglets viennent d'être ajoutés à #excel-tabs, qui était
+// vide jusqu'ici (donc masqué via .tabs-container:empty). Il faut recalculer
+// l'espace réservé pour l'entête flottant maintenant que la barre d'onglets
+// existe, sinon elle reste collée en haut de l'écran et se retrouve cachée
+// sous l'entête (voir updateViewerContentOffset).
+updateViewerContentOffset();
+
+// Seule la première feuille est chargée.
+afficherFeuille(0);
+}
+};
   fileReader.readAsArrayBuffer(file);
 }
 // AJOUT: sélectionner un ou plusieurs fichiers les sauvegarde tous dans la
