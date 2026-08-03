@@ -2505,54 +2505,62 @@ const htmlTableElement =
 // AJOUT : couleurs/gras/italique de police extraits manuellement du
 // xl/styles.xml (voir excelFontStylesHandlePromise plus haut), puisque
 // SheetJS (édition gratuite) ne fournit pas cette information via
-// excelCell.s. On affiche TOUJOURS un petit bandeau de diagnostic (succès
-// ou échec) le temps de vérifier que le bon build tourne sur le téléphone
-// — pas de console dev disponible sur Android pour vérifier autrement.
-const FONT_STYLE_DEBUG_VERSION = 'v3';
+// excelCell.s. En cas d'échec (fichier inattendu, etc.), on continue
+// simplement sans styliser le texte plutôt que de casser tout l'affichage.
 let fontStylesForSheet = {};
-let fontStyleDiagnostic = null;
 try {
-  if (typeof JSZip === 'undefined') {
-    fontStyleDiagnostic = 'JSZip introuvable (jszip.min.js absent/non chargé)';
-  } else {
-    const fontStylesHandle = await excelFontStylesHandlePromise;
-    if (fontStylesHandle) {
-      fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
-      fontStyleDiagnostic =
-        'OK — ' + Object.keys(fontStylesForSheet).length + ' cellule(s) stylée(s) trouvée(s)';
-    } else {
-      fontStyleDiagnostic = 'extractExcelFontStyles a retourné null';
-    }
+  const fontStylesHandle = await excelFontStylesHandlePromise;
+  if (fontStylesHandle) {
+    fontStylesForSheet = await fontStylesHandle.getFontStylesForSheet(index);
   }
 } catch (fontStyleError) {
-  fontStyleDiagnostic = 'Erreur : ' + fontStyleError.message;
   console.error('Couleurs de police Excel indisponibles :', fontStyleError);
-}
-{
-  const diagBanner = document.createElement('div');
-  const isOk = fontStyleDiagnostic && fontStyleDiagnostic.indexOf('OK') === 0;
-  diagBanner.style.cssText =
-    'padding:6px 10px;font-size:12px;border-bottom:1px solid #ccc;' +
-    (isOk
-      ? 'background:#d1e7dd;color:#0f5132;'
-      : 'background:#fff3cd;color:#664d03;');
-  diagBanner.textContent =
-    '[' + FONT_STYLE_DEBUG_VERSION + '] Styles police : ' + fontStyleDiagnostic;
-  Container.insertBefore(diagBanner, Container.firstChild);
 }
 
 if (htmlTableElement) {
-  for (
-    let row = usefulRange.s.r;
-    row <= usefulRange.e.r;
-    row++
-  ) {
+  // AJOUT : le tableau HTML généré par SheetJS respecte les cellules
+  // fusionnées d'Excel (rowSpan/colSpan) : dans une ligne DOM, les
+  // colonnes déjà couvertes par une fusion verticale démarrée plus haut
+  // sont ABSENTES (pas de <td> du tout). Le code précédent calculait
+  // l'index de la cellule DOM par simple soustraction de colonne
+  // (`ligne.cells[colonne - colonneDeDépart]`), ce qui devient FAUX dès
+  // qu'une fusion (n'importe où avant, même une seule colonne) a décalé
+  // les cellules réellement présentes dans la ligne — exactement le cas
+  // ici (colonne A fusionnée sur 18 lignes, etc.). Résultat : le style
+  // était appliqué à la mauvaise cellule. On reconstruit donc la vraie
+  // position logique (ligne, colonne) de chaque <td> réel en suivant les
+  // fusions au lieu de la deviner.
+  const numCols = usefulRange.e.c - usefulRange.s.c + 1;
+  // rowSpanCarry[col] = nombre de lignes DOM restantes où cette colonne
+  // est occupée par une fusion verticale démarrée plus haut.
+  const rowSpanCarry = new Array(numCols).fill(0);
 
-    for (
-      let column = usefulRange.s.c;
-      column <= usefulRange.e.c;
-      column++
-    ) {
+  for (
+    let rowIndexInTable = 0;
+    rowIndexInTable < htmlTableElement.rows.length;
+    rowIndexInTable++
+  ) {
+    const htmlRow = htmlTableElement.rows[rowIndexInTable];
+    const row = usefulRange.s.r + rowIndexInTable;
+    let domCellIndex = 0;
+    let virtualCol = 0;
+
+    while (virtualCol < numCols) {
+      if (rowSpanCarry[virtualCol] > 0) {
+        // Colonne occupée par une fusion verticale démarrée plus haut :
+        // aucun <td> ici, on avance juste la colonne logique.
+        rowSpanCarry[virtualCol]--;
+        virtualCol++;
+        continue;
+      }
+
+      const htmlCell = htmlRow.cells[domCellIndex];
+      if (!htmlCell) break;
+      domCellIndex++;
+
+      const column = usefulRange.s.c + virtualCol;
+      const colSpan = htmlCell.colSpan || 1;
+      const rowSpan = htmlCell.rowSpan || 1;
 
       const cellAddress =
         XLSX.utils.encode_cell({
@@ -2562,24 +2570,6 @@ if (htmlTableElement) {
 
       const excelCell =
         worksheet[cellAddress];
-
-   const htmlRow =
-        htmlTableElement.rows[
-          row - usefulRange.s.r
-        ];
-
-      if (!htmlRow) {
-        continue;
-      }
-
-      const htmlCell =
-        htmlRow.cells[
-          column - usefulRange.s.c
-        ];
-
-      if (!htmlCell) {
-        continue;
-      }
 
 // AJOUT : les styles de police extraits manuellement (voir plus haut) pour
 // cette cellule, indépendants de excelCell.s (qui ne contient jamais
@@ -2592,6 +2582,14 @@ if (
   (!excelCell || !excelCell.s) &&
   !manualFontStyle
 ) {
+  // Toujours faire avancer le suivi des fusions même si on ne stylise
+  // rien pour cette cellule, sinon les colonnes suivantes se décalent.
+  if (rowSpan > 1) {
+    for (let cc = 0; cc < colSpan; cc++) {
+      rowSpanCarry[virtualCol + cc] = rowSpan - 1;
+    }
+  }
+  virtualCol += colSpan;
   continue;
 }
 
@@ -2634,7 +2632,7 @@ const style =
         htmlCell.innerHTML = manualFontStyle.richRuns
           .map((run) => {
             const runStyles = [];
-            if (run.color) runStyles.push('color:' + run.color);
+            if (run.color) runStyles.push('color:' + run.color + ' !important');
             if (run.bold) runStyles.push('font-weight:bold');
             if (run.italic) runStyles.push('font-style:italic');
             const escapedText = (run.text || '')
@@ -2656,11 +2654,11 @@ const style =
       if (hasRichRuns) {
         // Rien à faire : chaque <span> porte déjà sa propre couleur.
       } else if (manualFontStyle && manualFontStyle.color) {
-        htmlCell.style.color = manualFontStyle.color;
+        htmlCell.style.setProperty('color', manualFontStyle.color, 'important');
       } else if (style.font && style.font.color) {
         const fg = resolveExcelColor(style.font.color);
         if (fg) {
-          htmlCell.style.color = fg;
+          htmlCell.style.setProperty('color', fg, 'important');
         }
       }
 
@@ -2706,6 +2704,13 @@ const style =
         htmlCell.style.verticalAlign =
           style.alignment.vertical;
       }
+
+      if (rowSpan > 1) {
+        for (let cc = 0; cc < colSpan; cc++) {
+          rowSpanCarry[virtualCol + cc] = rowSpan - 1;
+        }
+      }
+      virtualCol += colSpan;
     }
   }
 }
