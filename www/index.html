@@ -86,6 +86,18 @@ textarea {
   background: linear-gradient(90deg, #00c2cb, #00adb5, #007a80);
   border-radius: 0 0 16px 16px;
 }
+/* AJOUT : quand la barre recherche/sélection de l'écran d'accueil (ou la
+   barre de recherche du document) est directement soudée sous le titre
+   (voir .home-header-slot), le trait dégradé turquoise et les coins
+   arrondis de .toolbar tombaient au milieu de l'entête au lieu de la
+   terminer, ce qui ressemblait à une coupure visuelle indésirable. On les
+   masque dans ce cas pour que l'entête forme un seul bloc continu. */
+#header-wrap.header-merged .toolbar {
+  border-radius: 0;
+}
+#header-wrap.header-merged .toolbar::after {
+  display: none;
+}
 /* AJOUT : en mode visionneuse (zoom natif du navigateur activé), l'entête
    devient un overlay flottant caché par défaut. Comme le zoom natif zoome
    toute la page, l'entête (bouton retour, titre...) peut sortir de l'écran
@@ -519,8 +531,8 @@ mark.search-hl.current {
   color: #111;
   border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-  padding: 6px 18px;
-  width: 220px;
+  padding: 4px 14px;
+  width: 170px;
   z-index: 500;
   display: none;
 }
@@ -756,12 +768,33 @@ mark.search-hl.current {
    Reste visible en haut pendant le défilement de la liste de fichiers,
    car il est "sticky" par rapport à .viewer-container (le vrai conteneur
    qui défile). */
+/* AJOUT : la barre de recherche/sélection de l'écran d'accueil est
+   maintenant un enfant direct de #header-wrap (voir .home-header-slot
+   ci-dessous), juste sous .toolbar, au lieu d'être un élément
+   "position: sticky" dans la liste qui défile. Elle fait donc réellement
+   partie de l'entête fixe et ne peut plus s'en détacher visuellement. */
+.home-header-slot {
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+body.viewer-open .home-header-slot { display: none; }
 .home-sticky-header {
-  position: sticky;
-  top: 0;
-  z-index: 15;
   background-color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 14px rgba(0,173,181,0.18), 0 1px 0 rgba(0,0,0,0.03);
+  border-radius: 0 0 16px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.home-sticky-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00c2cb, #00adb5, #007a80);
 }
 .home-screen-title {
   color: #777;
@@ -1387,6 +1420,7 @@ canvas {
     </div>
     <input type="file" id="file-input" accept=".pdf,.docx,.xlsx" multiple>
   </div>
+  <div class="home-header-slot" id="home-header-slot"></div>
   <div class="search-bar" id="search-bar">
     <input type="text" id="search-input" placeholder="Rechercher dans le document...">
     <span class="search-count" id="search-count"></span>
@@ -1660,6 +1694,7 @@ const viewportMeta = document.getElementById('viewport-meta');
 // .toolbar seul, pour que la barre de recherche suive la même correction de
 // position/échelle pendant un pincement (voir CSS .header-wrap plus haut).
 const toolbarEl = document.getElementById('header-wrap');
+const homeHeaderSlot = document.getElementById('home-header-slot');
 let headerHideTimeout = null;
 
 function setNativeZoomEnabled(enabled) {
@@ -1768,6 +1803,7 @@ window.addEventListener('resize', updateViewerContentOffset);
 function setViewerZoomMode(active) {
   setNativeZoomEnabled(active);
   document.body.classList.toggle('viewer-open', active);
+  if (active && toolbarEl) toolbarEl.classList.remove('header-merged');
   updateViewerContentOffset();
   clearTimeout(headerHideTimeout);
   if (active) {
@@ -3685,11 +3721,11 @@ function renderHomeScreen() {
   homeSelectedIds.clear();
   isDocumentOpen = false;
   setViewerZoomMode(false);
-  // CORRECTION : sur l'écran d'accueil, le padding-top par défaut de
-  // .viewer-container (5px, prévu pour les documents) s'ajoutait à celui
-  // de la barre de recherche/tri en dessous de l'entête, creusant un
-  // espace vide visible. On le retire complètement ici (l'entête a déjà
-  // sa propre ombre portée pour se démarquer du contenu).
+  // CORRECTION : la barre de recherche/tri de l'écran d'accueil vit
+  // maintenant dans #home-header-slot (voir plus bas), en dehors de
+  // .viewer-container. On retire quand même le padding-top par défaut
+  // (5px, prévu pour les documents) pour que la liste colle directement
+  // sous l'entête.
   viewer.style.paddingTop = '0px';
   updateBackFabVisibility();
   updateTopBarButtons();
@@ -3829,7 +3865,9 @@ function renderHomeScreen() {
   toolsRow.appendChild(selectToggleBtn);
   stickyHeader.appendChild(toolsRow);
   stickyHeader.appendChild(tabsRow);
-  container.appendChild(stickyHeader);
+  homeHeaderSlot.innerHTML = '';
+  homeHeaderSlot.appendChild(stickyHeader);
+  toolbarEl.classList.add('header-merged');
 
   // Barre d'actions groupées (masquée tant que le mode sélection n'est pas actif)
   const bulkBar = document.createElement('div');
