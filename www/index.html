@@ -3716,58 +3716,96 @@ function trashFileNameFor(record) {
   return record.id + ext;
 }
 
-// Déplace un enregistrement de la bibliothèque vers la corbeille : déplace
-// réellement le fichier sur le disque (natif) puis met à jour IndexedDB
-// (retrait de 'files', ajout dans 'trash' avec la date de mise en corbeille).
-async function moveRecordToTrash(record) {
+// Déplace un ou plusieurs enregistrements de la bibliothèque vers la
+// corbeille en une seule fois : UN seul appel au pont natif (moveToTrashBatch,
+// qui boucle côté Java) et UNE seule transaction IndexedDB pour tout le lot,
+// au lieu d'un aller-retour natif + une transaction par fichier. Sur un gros
+// lot (ex. 127 fichiers), c'était la cause principale de lenteur : chaque
+// traversée JS -> Java a un coût fixe, et chaque transaction IndexedDB
+// implique sa propre validation/écriture sur disque.
+async function moveRecordsToTrashBatch(records) {
+  if (records.length === 0) return 0;
   const bridge = getFileOpsBridge();
-  let originalAbsolutePath = null;
-  let trashFileName = null;
 
-  if (bridge && record.path) {
-    try {
+  // Prépare, pour chaque fichier, son chemin réel et son nom de destination
+  // dans la corbeille (sans encore rien déplacer).
+  const plan = records.map(record => {
+    let originalAbsolutePath = null;
+    let trashFileName = null;
+    if (bridge && record.path) {
       originalAbsolutePath = bridge.resolveExternalPath(record.path);
       trashFileName = trashFileNameFor(record);
-      const ok = bridge.moveToTrash(originalAbsolutePath, trashFileName);
-      if (!ok) {
-        showToast('Impossible de déplacer le fichier réel vers la corbeille.', 'error');
-        return false;
-      }
+    }
+    return { record, originalAbsolutePath, trashFileName };
+  });
+
+  // Un seul appel natif pour tous les fichiers ayant un chemin réel connu.
+  let nativeResults = null;
+  const withRealPath = plan.filter(p => p.trashFileName);
+  if (bridge && withRealPath.length > 0) {
+    try {
+      const pairs = withRealPath.map(p => ({
+        source: p.originalAbsolutePath,
+        trashFileName: p.trashFileName
+      }));
+      const raw = bridge.moveToTrashBatch(JSON.stringify(pairs));
+      nativeResults = JSON.parse(raw); // tableau de booléens, même ordre que 'pairs'
     } catch (err) {
-      console.warn('moveRecordToTrash (natif) :', err);
+      console.warn('moveRecordsToTrashBatch (natif) :', err);
       showToast('Erreur lors du déplacement vers la corbeille : ' + err.message, 'error');
-      return false;
     }
   }
-  // NOTE : si bridge est indisponible (mode web/navigateur, utilisé en dev
-  // hors APK) ou que le fichier n'a pas de chemin réel connu (ex. importé
-  // manuellement sans venir du scan), on se contente du déplacement logique
-  // dans IndexedDB ci-dessous, sans opération sur un vrai fichier disque.
+
+  // Réaligne les résultats natifs avec le plan complet (les fichiers sans
+  // chemin réel connu sont traités comme un simple déplacement logique).
+  let nativeIdx = 0;
+  const toCommit = [];
+  for (const p of plan) {
+    let moved = true;
+    if (p.trashFileName) {
+      moved = nativeResults ? !!nativeResults[nativeIdx] : false;
+      nativeIdx++;
+    }
+    if (moved) toCommit.push(p);
+  }
+  if (toCommit.length === 0) return 0;
 
   const db = await openLibraryDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction([LIBRARY_STORE_NAME, TRASH_STORE_NAME], 'readwrite');
-    tx.objectStore(LIBRARY_STORE_NAME).delete(record.id);
-    tx.objectStore(TRASH_STORE_NAME).put({
-      id: record.id,
-      name: record.name,
-      type: record.type,
-      size: record.size,
-      originalPath: record.path || null,
-      originalDirectory: record.directory || null,
-      originalAbsolutePath,
-      trashFileName,
-      deletedAt: Date.now(),
-      // Le blob n'est conservé que quand il n'y a pas de vrai fichier déplacé
-      // (repli web/dev), pour permettre quand même une restauration.
-      blob: trashFileName ? null : (record.blob || null),
-      favorite: record.favorite || false
-    });
+    const filesStore = tx.objectStore(LIBRARY_STORE_NAME);
+    const trashStore = tx.objectStore(TRASH_STORE_NAME);
+    for (const p of toCommit) {
+      const record = p.record;
+      filesStore.delete(record.id);
+      trashStore.put({
+        id: record.id,
+        name: record.name,
+        type: record.type,
+        size: record.size,
+        originalPath: record.path || null,
+        originalDirectory: record.directory || null,
+        originalAbsolutePath: p.originalAbsolutePath,
+        trashFileName: p.trashFileName,
+        deletedAt: Date.now(),
+        // Le blob n'est conservé que quand il n'y a pas de vrai fichier déplacé
+        // (repli web/dev), pour permettre quand même une restauration.
+        blob: p.trashFileName ? null : (record.blob || null),
+        favorite: record.favorite || false
+      });
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 
-  return true;
+  return toCommit.length;
+}
+
+// Conservé pour les appels site-par-site (suppression d'un seul fichier) :
+// délègue simplement à la version en lot avec un tableau d'un élément.
+async function moveRecordToTrash(record) {
+  const moved = await moveRecordsToTrashBatch([record]);
+  return moved > 0;
 }
 
 function getTrashRecord(id) {
@@ -3903,27 +3941,55 @@ async function restoreFromTrashItem(id) {
 // déclenchée manuellement à tout moment par l'utilisateur (avant les 30 jours),
 // ou automatiquement par purgeExpiredTrash() une fois le délai dépassé.
 async function permanentlyDeleteTrashItem(id) {
-  const trashRecord = await getTrashRecord(id);
-  if (!trashRecord) return false;
+  const deleted = await permanentlyDeleteTrashItemsBatch([id]);
+  return deleted > 0;
+}
+
+// Version en lot de permanentlyDeleteTrashItem : un seul appel natif
+// (deleteForeverBatch) + une seule transaction IndexedDB pour tous les
+// fichiers, utilisée par "Vider la corbeille" et la purge automatique.
+async function permanentlyDeleteTrashItemsBatch(ids) {
+  if (ids.length === 0) return 0;
+  const db = await openLibraryDB();
+
+  const trashRecords = await new Promise((resolve, reject) => {
+    const tx = db.transaction(TRASH_STORE_NAME, 'readonly');
+    const store = tx.objectStore(TRASH_STORE_NAME);
+    const results = [];
+    let pending = ids.length;
+    if (pending === 0) { resolve(results); return; }
+    ids.forEach(id => {
+      const req = store.get(id);
+      req.onsuccess = () => {
+        if (req.result) results.push(req.result);
+        pending--;
+        if (pending === 0) resolve(results);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  });
+  if (trashRecords.length === 0) return 0;
 
   const bridge = getFileOpsBridge();
-  if (bridge && trashRecord.trashFileName) {
+  const withRealFile = trashRecords.filter(r => r.trashFileName);
+  if (bridge && withRealFile.length > 0) {
     try {
-      bridge.deleteForever(trashRecord.trashFileName);
+      const names = withRealFile.map(r => r.trashFileName);
+      bridge.deleteForeverBatch(JSON.stringify(names));
     } catch (err) {
-      console.warn('permanentlyDeleteTrashItem (natif) :', err);
+      console.warn('permanentlyDeleteTrashItemsBatch (natif) :', err);
     }
   }
 
-  const db = await openLibraryDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(TRASH_STORE_NAME, 'readwrite');
-    tx.objectStore(TRASH_STORE_NAME).delete(id);
+    const store = tx.objectStore(TRASH_STORE_NAME);
+    trashRecords.forEach(r => store.delete(r.id));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 
-  return true;
+  return trashRecords.length;
 }
 
 // Purge automatique : supprime définitivement tout fichier en corbeille
@@ -3934,13 +4000,11 @@ async function purgeExpiredTrash() {
   const now = Date.now();
   const limitMs = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const expired = items.filter(r => (now - r.deletedAt) > limitMs);
-  for (const r of expired) {
-    await permanentlyDeleteTrashItem(r.id);
+  const count = await permanentlyDeleteTrashItemsBatch(expired.map(r => r.id));
+  if (count) {
+    showToast(count + ' fichier(s) supprimé(s) définitivement (corbeille > 30 jours).', 'info');
   }
-  if (expired.length) {
-    showToast(expired.length + ' fichier(s) supprimé(s) définitivement (corbeille > 30 jours).', 'info');
-  }
-  return expired.length;
+  return count;
 }
 
 function formatFileSize(bytes) {
@@ -4915,16 +4979,15 @@ async function bulkDeleteSelected() {
   });
   if (!ok) return;
   // AJOUT: récupère les enregistrements complets (chemin réel inclus), pas
-  // juste les ids, car moveRecordToTrash a besoin de record.path pour
+  // juste les ids, car moveRecordsToTrashBatch a besoin de record.path pour
   // déplacer le vrai fichier sur le disque.
   const records = await getLibraryFilesByIds(ids);
-  // Séquentiel plutôt que Promise.all : chaque déplacement réel de fichier
-  // passe par le pont natif, éviter de lancer toutes les opérations disque
-  // en parallèle sur un appareil à faible RAM (ZTE Blade A35e, 2 Go).
-  let moved = 0;
-  for (const record of records) {
-    if (await moveRecordToTrash(record)) moved++;
-  }
+  // CORRECTION (lenteur sur gros lot) : un seul appel natif en lot + une
+  // seule transaction IndexedDB pour tout le lot, au lieu d'un aller-retour
+  // natif et d'une transaction séparée par fichier (127 fichiers = 127
+  // traversées du pont JS/Java + 127 transactions IndexedDB, chacune très
+  // coûteuse individuellement). Voir moveRecordsToTrashBatch.
+  const moved = await moveRecordsToTrashBatch(records);
   homeSelectMode = false;
   homeSelectedIds.clear();
   renderHomeScreen();
@@ -6040,9 +6103,7 @@ document.addEventListener('visibilitychange', () => {
       { title: 'Vider la corbeille', icon: '', okLabel: 'Vider', cancelLabel: 'Annuler' }
     );
     if (!confirmed) return;
-    for (const r of records) {
-      await permanentlyDeleteTrashItem(r.id);
-    }
+    await permanentlyDeleteTrashItemsBatch(records.map(r => r.id));
     renderTrashList();
   });
 
