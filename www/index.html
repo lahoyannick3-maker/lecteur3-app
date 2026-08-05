@@ -862,6 +862,14 @@ body.viewer-open .home-header-slot { display: none; }
   display: flex;
 }
 
+/* AJOUT : évite que la barre d'actions groupées (fixed, en bas) recouvre le
+   dernier fichier de la liste en mode sélection. Hauteur approx. de la barre
+   (boutons 56px + paddings/bordure) arrondie généreusement pour laisser un
+   peu d'air. */
+.home-file-list.with-bulk-bar-space {
+  padding-bottom: 96px;
+}
+
 /* optionnel mais recommandé pour alignement parfait */
 .library-bulk-bar .library-action-btn {
   width: auto;
@@ -1443,6 +1451,9 @@ canvas {
       <span class="back-arrow">←</span><span>Accueil</span>
     </button>
     <div class="title" id="doc-title">Lecteur Multi-Formats</div>
+    <button class="library-action-btn share top-btn-hidden" id="viewer-share-btn" title="Partager ce fichier">
+      <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7a2.5 2.5 0 000-1.39l7-4.11A2.99 2.99 0 0018 7.91a3 3 0 10-3-3c0 .23.03.45.08.66l-7 4.11a3 3 0 100 4.64l7.05 4.14A2.82 2.82 0 0015 19a3 3 0 103-2.92z"/></svg>
+    </button>
     <button class="btn btn-icon top-btn-hidden" id="search-toggle" title="Rechercher dans le document">🔍</button>
     <div class="menu-wrap" id="menu-wrap">
       <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
@@ -1513,6 +1524,7 @@ canvas {
     <div class="pause-hint" id="pause-hint">
   Touchez le centre des flèches pour mettre en pause
   <button id="pause-hint-close" aria-label="Fermer">×</button>
+</div>
 </div>
 </div>
 
@@ -2271,6 +2283,12 @@ let renderTimeout = null;
 let lastScale = 1;
 let pageViewports = {};
 let currentFileExtension = '';
+// AJOUT: référence au fichier actuellement ouvert dans le visionneur, pour
+// permettre le partage direct sans revenir à la bibliothèque. Si le fichier
+// vient de la bibliothèque, on garde le record complet (chemin réel connu ->
+// partage rapide natif, voir shareFile) ; sinon (import manuel, fichier reçu
+// via "Ouvrir avec"), on ne garde que le File en mémoire.
+let currentViewerShareSource = null;
 let lastWidth = window.innerWidth; // Stocke la largeur initiale de l'écran
 let isDocumentOpen = false;
 let isZooming = false;
@@ -2329,8 +2347,11 @@ function resetViewerState() {
   currentDocxRefs = null;
 }
 
-function loadFileIntoViewer(file) {
+function loadFileIntoViewer(file, sourceRecord = null) {
   if (!file) return;
+  // AJOUT: mémorise la source pour le bouton "Partager" du visionneur — le
+  // record complet (chemin réel) si dispo, sinon le File lui-même (repli).
+  currentViewerShareSource = sourceRecord ? { record: sourceRecord } : { file };
   // Reset complet + anti memory leak - CORRECTION 1
   zoomWrapper.innerHTML = '<p class="loading">Chargement...</p>';
   // Nouveau document : on repart a un zoom de 100%.
@@ -3325,6 +3346,25 @@ document.getElementById('scroll-bottom-btn').addEventListener('click', () => {
 
 // ========== AJOUT: Recherche dans le document ==========
 const searchToggleBtn = document.getElementById('search-toggle');
+// AJOUT: bouton "Partager" du visionneur (partage direct sans revenir à la
+// bibliothèque). Même logique de visibilité que search-toggle (visible
+// seulement quand un document est ouvert, voir updateTopBarButtons).
+const viewerShareBtn = document.getElementById('viewer-share-btn');
+viewerShareBtn.addEventListener('click', async () => {
+  if (!currentViewerShareSource) {
+    showToast('Aucun fichier à partager.', 'error');
+    return;
+  }
+  if (currentViewerShareSource.record) {
+    await shareFile(currentViewerShareSource.record);
+  } else if (currentViewerShareSource.file) {
+    const f = currentViewerShareSource.file;
+    // Pseudo-record compatible avec shareFile() : pas de chemin réel connu
+    // (fichier importé manuellement ou reçu via "Ouvrir avec"), donc repli
+    // sur le blob en mémoire directement.
+    await shareFile({ name: f.name, type: f.type, blob: f, path: null });
+  }
+});
 const searchBar = document.getElementById('search-bar');
 const searchInput = document.getElementById('search-input');
 const searchCount = document.getElementById('search-count');
@@ -4572,10 +4612,33 @@ const backHomeBtn = document.getElementById('back-home-btn');
 const menuToggleBtn = document.getElementById('menu-toggle');
 const overflowMenu = document.getElementById('overflow-menu');
 
-let activeFileTab = 'all'; // 'all' | 'pdf' | 'docx' | 'xlsx'
+// AJOUT: persistance des préférences d'affichage de l'accueil (tri, filtre)
+// via localStorage, comme le fait déjà l'app pour d'autres réglages (dernier
+// scan complet, meilleur score Snake...). Sans ça, tout revenait aux valeurs
+// par défaut à chaque redémarrage de l'app.
+function loadHomePrefs() {
+  try {
+    const raw = localStorage.getItem('lecteurapp_home_prefs');
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+function saveHomePrefs() {
+  try {
+    localStorage.setItem('lecteurapp_home_prefs', JSON.stringify({
+      activeFileTab,
+      homeSortMode,
+      homeSortDirection
+    }));
+  } catch (_) { /* stockage indisponible : on continue sans persister */ }
+}
+const __savedHomePrefs = loadHomePrefs();
+
+let activeFileTab = __savedHomePrefs?.activeFileTab || 'all'; // 'all' | 'pdf' | 'docx' | 'xlsx'
 let homeSearchQuery = '';
-let homeSortMode = 'date'; // 'date' | 'name' | 'size' | 'lastOpened'
-let homeSortDirection = 'desc'; // 'desc' (neuf -> vieux) | 'asc' (vieux -> neuf)
+let homeSortMode = __savedHomePrefs?.homeSortMode || 'date'; // 'date' | 'name' | 'size' | 'lastOpened'
+let homeSortDirection = __savedHomePrefs?.homeSortDirection || 'desc'; // 'desc' (neuf -> vieux) | 'asc' (vieux -> neuf)
 let homeSelectMode = false;
 let homeSelectedIds = new Set();
 let currentHomeRefs = null; // { listEl, bulkCount, bulkShareBtn, bulkDeleteBtn }
@@ -4924,7 +4987,7 @@ function renderHomeFileList() {
             markFileOpened(r.id).catch(() => {});
             try {
               const file = await loadRecordContent(r);
-              loadFileIntoViewer(file);
+              loadFileIntoViewer(file, r);
             } catch (err) {
               console.warn('Ouverture fichier échouée :', err);
               showToast('Impossible d\'ouvrir "' + r.name + '" : ' + err.message, 'error');
@@ -4950,6 +5013,7 @@ function renderHomeScreen() {
   excelTabs.innerHTML = '';
   docTitle.textContent = 'Lecteur Multi-Formats';
   currentFileExtension = '';
+  currentViewerShareSource = null;
   homeSelectMode = false;
   homeSelectedIds.clear();
   isDocumentOpen = false;
@@ -4991,6 +5055,7 @@ function renderHomeScreen() {
 `;
     option.addEventListener('click', () => {
       activeFileTab = tab.key;
+      saveHomePrefs();
       filterDropdown.querySelectorAll('input[name="homeFilterTab"]').forEach(r => { r.checked = (r.value === tab.key); });
       filterDropdown.classList.remove('active');
       filterBtn.classList.remove('open');
@@ -5075,6 +5140,7 @@ function renderHomeScreen() {
     if (!result) return;
     homeSortMode = result.field;
     homeSortDirection = result.dir;
+    saveHomePrefs();
     renderHomeFileList();
   });
 
@@ -5138,6 +5204,11 @@ container.appendChild(bulkBar);
       : '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm-1.2 14.6L6.4 12.2l1.4-1.4 2.99 2.99 6.4-6.4 1.4 1.4z"/></svg>';
     selectToggleBtn.classList.toggle('active', homeSelectMode);
     bulkBar.classList.toggle('active', homeSelectMode);
+    // AJOUT : la barre d'actions groupées est en position fixed en bas de
+    // l'écran et cachait le dernier fichier de la liste (recouvert derrière
+    // elle). On réserve donc de la place en bas de la liste tant qu'on est
+    // en mode sélection.
+    listEl.classList.toggle('with-bulk-bar-space', homeSelectMode);
     toolsRow.classList.toggle('select-mode', homeSelectMode);
     tabsRow.style.display = homeSelectMode ? 'none' : '';
     updateTopBarButtons();
@@ -5197,6 +5268,7 @@ function updateBackFabVisibility() {
 function updateTopBarButtons() {
   const menuWrap = document.getElementById('menu-wrap');
   searchToggleBtn.classList.toggle('top-btn-hidden', !isDocumentOpen);
+  viewerShareBtn.classList.toggle('top-btn-hidden', !isDocumentOpen);
   menuWrap.classList.toggle('top-btn-hidden', isDocumentOpen || homeSelectMode);
 }
 
