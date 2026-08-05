@@ -234,6 +234,39 @@ body.viewer-open .toolbar {
   height: 100vh;
 }
 .game-screen.active { display: flex; }
+/* AJOUT: écran Corbeille */
+.trash-note {
+  font-size: 12px;
+  color: #666;
+  padding: 8px 16px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+}
+.trash-item-days {
+  font-size: 11px;
+  color: #d32f2f;
+}
+.trash-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.trash-action-btn {
+  border: none;
+  background: #eef7f7;
+  color: #00838f;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.trash-action-btn.danger {
+  background: #fdecea;
+  color: #c62828;
+}
+.trash-action-btn:active {
+  opacity: 0.7;
+}
 .game-toolbar {
   background: #fff;
   padding: 12px 16px;
@@ -1400,7 +1433,7 @@ canvas {
     <div class="sort-divider"></div>
     <button class="file-action-row danger" data-action="delete">
       <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/></svg>
-      <span>Supprimer</span>
+      <span>Placer dans la corbeille</span>
     </button>
   </div>
 </div>
@@ -1415,6 +1448,7 @@ canvas {
       <button class="btn btn-icon" id="menu-toggle" title="Menu">⋮</button>
       <div class="overflow-menu" id="overflow-menu">
         <label for="file-input">Ouvrir un fichier</label>
+        <button type="button" id="open-trash-btn">🗑️ Corbeille</button>
         <button type="button" id="open-game-btn">🎮 Mini-jeu</button>
       </div>
     </div>
@@ -1480,6 +1514,24 @@ canvas {
   Touchez le centre des flèches pour mettre en pause
   <button id="pause-hint-close" aria-label="Fermer">×</button>
 </div>
+</div>
+
+<!-- AJOUT: écran dédié Corbeille -->
+<div class="game-screen" id="trash-screen">
+  <div class="game-toolbar">
+    <button class="back-fab active" id="trash-back-btn" title="Retour à l'accueil">
+      <span class="back-arrow">←</span>
+      <span>Accueil</span>
+    </button>
+    <div class="game-toolbar-center">
+      <div class="title">🗑️ Corbeille</div>
+    </div>
+    <div class="game-toolbar-right">
+      <button id="trash-empty-btn" class="library-action-btn danger" title="Vider la corbeille">Vider</button>
+    </div>
+  </div>
+  <div class="trash-note">Les fichiers sont supprimés définitivement 30 jours après leur mise en corbeille.</div>
+  <div id="trash-list" class="home-screen" style="flex:1; overflow-y:auto;"></div>
 </div>
 
 <script>
@@ -2251,29 +2303,6 @@ async function getLibraryIndex() {
     return index;
 }
 
-// État de module pour la vue "globale" (dézoomée) des fichiers Excel.
-// Un seul jeu de variables + un seul listener resize global (voir plus bas),
-// au lieu d'un par fichier ouvert, pour éviter toute fuite mémoire.
-let currentExcelContainer = null;
-let excelGlobalView = false;
-function applyExcelZoomState() {
-  if (!currentExcelContainer) return;
-  if (!excelGlobalView) {
-    currentExcelContainer.style.zoom = '';
-    return;
-  }
-  const table = currentExcelContainer.querySelector('table');
-  if (!table) return;
-  const naturalWidth = table.scrollWidth;
-  if (!naturalWidth) return;
-  const availableWidth = viewer.clientWidth - 10; // petite marge
-  const scale = Math.min(1, availableWidth / naturalWidth);
-  currentExcelContainer.style.zoom = scale;
-}
-window.addEventListener('resize', () => {
-  if (excelGlobalView) applyExcelZoomState();
-});
-
 function resetViewerState() {
   excelTabs.innerHTML = '';
   updateViewerContentOffset();
@@ -2298,8 +2327,6 @@ function resetViewerState() {
   currentPdfDoc = null;
   pageViewports = {};
   currentDocxRefs = null;
-  currentExcelContainer = null;
-  excelGlobalView = false;
 }
 
 function loadFileIntoViewer(file) {
@@ -2392,21 +2419,26 @@ Container
 // se déclenche en même temps que le nôtre), tout en laissant le
 // pincement à 2 doigts fonctionner normalement, lui, par-dessus.
 Container.style.touchAction = 'manipulation';
-// CORRECTION (fuite mémoire) : Container et excelGlobalView vivaient avant
-// dans une closure recréée à CHAQUE ouverture de fichier Excel, avec un
-// window.addEventListener('resize', ...) ajouté à nouveau à chaque fois et
-// jamais retiré. Au fil d'une session avec plusieurs fichiers Excel ouverts,
-// ces listeners s'accumulaient indéfiniment sur `window`, chacun gardant une
-// référence vers l'ancien Container (détaché du DOM mais non libérable par le
-// GC à cause de cette référence). On utilise maintenant l'état de module
-// currentExcelContainer / excelGlobalView (déclarés plus haut) et un seul
-// listener global (voir plus bas dans le script) au lieu d'un par fichier.
-currentExcelContainer = Container;
-excelGlobalView = false;
-applyExcelZoomState();
+let excelGlobalView = false;
+function applyExcelZoomState() {
+  if (!excelGlobalView) {
+    Container.style.zoom = '';
+    return;
+  }
+  const table = Container.querySelector('table');
+  if (!table) return;
+  const naturalWidth = table.scrollWidth;
+  if (!naturalWidth) return;
+  const availableWidth = viewer.clientWidth - 10; // petite marge
+  const scale = Math.min(1, availableWidth / naturalWidth);
+  Container.style.zoom = scale;
+}
 Container.addEventListener('dblclick', () => {
   excelGlobalView = !excelGlobalView;
   applyExcelZoomState();
+});
+window.addEventListener('resize', () => {
+  if (excelGlobalView) applyExcelZoomState();
 });
 
 let activeSheetIndex = -1;
@@ -3408,12 +3440,19 @@ searchPrevBtn.addEventListener('click', () => goToMatch(searchMatchIndex - 1));
 // ========== AJOUT: Bibliothèque de fichiers locale (IndexedDB) ==========
 const LIBRARY_DB_NAME = 'lecteurLibraryDB';
 const LIBRARY_STORE_NAME = 'files';
+// AJOUT: store dédié à la corbeille. Séparé du store 'files' pour que la
+// bibliothèque et la corbeille restent deux listes bien distinctes (un
+// fichier "en corbeille" ne doit jamais apparaître dans la bibliothèque, et
+// inversement), même s'ils partagent le même id d'un déplacement à l'autre.
+const TRASH_STORE_NAME = 'trash';
+// AJOUT: délai avant suppression définitive automatique d'un fichier en corbeille.
+const TRASH_RETENTION_DAYS = 30;
 let libraryDbPromise = null;
 
 function openLibraryDB() {
   if (libraryDbPromise) return libraryDbPromise;
   libraryDbPromise = new Promise((resolve, reject) => {
-const request = indexedDB.open(LIBRARY_DB_NAME, 3);
+const request = indexedDB.open(LIBRARY_DB_NAME, 4);
 request.onupgradeneeded = (e) => {
   const db = e.target.result;
 
@@ -3431,6 +3470,17 @@ request.onupgradeneeded = (e) => {
   if (!store.indexNames.contains('hash')) {
   store.createIndex('hash', 'hash', { unique: false });
 }
+
+  // AJOUT: création du store 'trash' (corbeille), v3 -> v4.
+  let trashStore;
+  if (!db.objectStoreNames.contains(TRASH_STORE_NAME)) {
+    trashStore = db.createObjectStore(TRASH_STORE_NAME, { keyPath: 'id' });
+  } else {
+    trashStore = e.target.transaction.objectStore(TRASH_STORE_NAME);
+  }
+  if (!trashStore.indexNames.contains('deletedAt')) {
+    trashStore.createIndex('deletedAt', 'deletedAt', { unique: false });
+  }
 };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -3451,6 +3501,15 @@ async function calculateFileHash(file) {
 }
 
 async function saveFileToLibrary(file, path = null, lastModified = null, directory = null) {
+  // NOTE (anti-gonflement) : le hash est calculé sur le contenu complet du
+  // fichier comme avant (système de détection de doublons intact, inchangé),
+  // mais le contenu lui-même (blob) n'est plus conservé en base pour les
+  // fichiers qui ont un chemin réel connu (path) : on peut toujours le
+  // relire depuis le disque à la demande (voir loadRecordContent), donc le
+  // garder en double dans IndexedDB ne fait que gonfler l'espace utilisateur
+  // pour rien. Le blob n'est conservé que pour les fichiers sans chemin réel
+  // (importés manuellement via le sélecteur de fichier), pour lesquels
+  // c'est la seule copie du contenu qui existe.
   const hash = await calculateFileHash(file);
   return openLibraryDB().then(db => new Promise((resolve, reject) => {
     const tx = db.transaction(LIBRARY_STORE_NAME, 'readwrite');
@@ -3491,7 +3550,7 @@ async function saveFileToLibrary(file, path = null, lastModified = null, directo
         existingRecord.lastModified = lastModified;
         existingRecord.directory = directory;
         existingRecord.path = path;
-        existingRecord.blob = file;
+        existingRecord.blob = path ? null : file;
         existingRecord.hash = hash;
         store.put(existingRecord);
         resolve(existingRecord);
@@ -3511,7 +3570,7 @@ async function saveFileToLibrary(file, path = null, lastModified = null, directo
         date: Date.now(),
         favorite: false,
         lastOpened: null,
-        blob: file,
+        blob: path ? null : file,
         hash
       };
       store.put(record);
@@ -3593,6 +3652,255 @@ function toggleFavoriteInLibrary(id, favorite) {
 
 function markFileOpened(id) {
   return patchLibraryRecord(id, { lastOpened: Date.now() });
+}
+
+// ========== AJOUT: Corbeille (suppression réelle avec délai + restauration) ==========
+// Principe : "placer dans la corbeille" déplace VRAIMENT le fichier réel sur
+// le disque (via FileOpsBridge, pont natif Java) vers un dossier privé de
+// l'app (donc invisible/inaccessible hors de l'app, et effacé automatiquement
+// si l'app est désinstallée : voir discussion). Ça règle le bug où
+// "supprimer" n'effaçait qu'une copie interne, laissant le vrai fichier sur
+// le téléphone -> le scan le redétectait et le rajoutait sans arrêt.
+
+function getFileOpsBridge() {
+  return (window.FileOpsBridge && window.Capacitor?.isNativePlatform())
+    ? window.FileOpsBridge
+    : null;
+}
+
+// Nom de fichier unique dans le dossier corbeille (garde l'extension, utile
+// pour un éventuel diagnostic manuel, mais l'id garantit l'unicité).
+function trashFileNameFor(record) {
+  const dot = record.name.lastIndexOf('.');
+  const ext = dot !== -1 ? record.name.slice(dot) : '';
+  return record.id + ext;
+}
+
+// Déplace un enregistrement de la bibliothèque vers la corbeille : déplace
+// réellement le fichier sur le disque (natif) puis met à jour IndexedDB
+// (retrait de 'files', ajout dans 'trash' avec la date de mise en corbeille).
+async function moveRecordToTrash(record) {
+  const bridge = getFileOpsBridge();
+  let originalAbsolutePath = null;
+  let trashFileName = null;
+
+  if (bridge && record.path) {
+    try {
+      originalAbsolutePath = bridge.resolveExternalPath(record.path);
+      trashFileName = trashFileNameFor(record);
+      const ok = bridge.moveToTrash(originalAbsolutePath, trashFileName);
+      if (!ok) {
+        showToast('Impossible de déplacer le fichier réel vers la corbeille.', 'error');
+        return false;
+      }
+    } catch (err) {
+      console.warn('moveRecordToTrash (natif) :', err);
+      showToast('Erreur lors du déplacement vers la corbeille : ' + err.message, 'error');
+      return false;
+    }
+  }
+  // NOTE : si bridge est indisponible (mode web/navigateur, utilisé en dev
+  // hors APK) ou que le fichier n'a pas de chemin réel connu (ex. importé
+  // manuellement sans venir du scan), on se contente du déplacement logique
+  // dans IndexedDB ci-dessous, sans opération sur un vrai fichier disque.
+
+  const db = await openLibraryDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([LIBRARY_STORE_NAME, TRASH_STORE_NAME], 'readwrite');
+    tx.objectStore(LIBRARY_STORE_NAME).delete(record.id);
+    tx.objectStore(TRASH_STORE_NAME).put({
+      id: record.id,
+      name: record.name,
+      type: record.type,
+      size: record.size,
+      originalPath: record.path || null,
+      originalDirectory: record.directory || null,
+      originalAbsolutePath,
+      trashFileName,
+      deletedAt: Date.now(),
+      // Le blob n'est conservé que quand il n'y a pas de vrai fichier déplacé
+      // (repli web/dev), pour permettre quand même une restauration.
+      blob: trashFileName ? null : (record.blob || null),
+      favorite: record.favorite || false
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return true;
+}
+
+function getTrashRecord(id) {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(TRASH_STORE_NAME, 'readonly');
+    const req = tx.objectStore(TRASH_STORE_NAME).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+function getAllTrashFiles() {
+  return openLibraryDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(TRASH_STORE_NAME, 'readonly');
+    const request = tx.objectStore(TRASH_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(request.result.sort((a, b) => b.deletedAt - a.deletedAt));
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+// Restaure un fichier de la corbeille vers son emplacement d'origine (déplacement
+// réel disque, natif) puis le fait réapparaître dans la bibliothèque.
+// Cherche un nom de fichier disponible à l'emplacement de destination : si
+// "nom.ext" existe déjà, essaie "nom (restauré).ext", puis "nom (restauré 2).ext",
+// etc. jusqu'à trouver un nom libre. Évite d'écraser silencieusement un
+// fichier déjà présent à l'emplacement d'origine (ex. un nouveau fichier créé
+// entre-temps, ou une seconde restauration du même fichier).
+function findAvailableRestorePath(bridge, absoluteDestPath) {
+  if (!bridge.fileExists(absoluteDestPath)) {
+    return absoluteDestPath;
+  }
+  const slashIdx = absoluteDestPath.lastIndexOf('/');
+  const dir = slashIdx !== -1 ? absoluteDestPath.slice(0, slashIdx) : '';
+  const fileName = slashIdx !== -1 ? absoluteDestPath.slice(slashIdx + 1) : absoluteDestPath;
+  const dotIdx = fileName.lastIndexOf('.');
+  const base = dotIdx !== -1 ? fileName.slice(0, dotIdx) : fileName;
+  const ext = dotIdx !== -1 ? fileName.slice(dotIdx) : '';
+
+  for (let n = 1; n <= 100; n++) {
+    const suffix = n === 1 ? ' (restauré)' : ` (restauré ${n})`;
+    const candidate = dir + '/' + base + suffix + ext;
+    if (!bridge.fileExists(candidate)) return candidate;
+  }
+  // Repli extrême (100 conflits déjà, très improbable) : horodatage pour
+  // garantir l'unicité et ne jamais bloquer la restauration.
+  return dir + '/' + base + ' (restauré ' + Date.now() + ')' + ext;
+}
+
+async function restoreFromTrashItem(id) {
+  const trashRecord = await getTrashRecord(id);
+  if (!trashRecord) return false;
+
+  const bridge = getFileOpsBridge();
+  // Chemin relatif final restauré (peut différer de l'original en cas de
+  // conflit de nom) et nom de fichier final, mis à jour ci-dessous si besoin.
+  let finalPath = trashRecord.originalPath;
+  let finalName = trashRecord.name;
+  let wasRenamed = false;
+
+  if (bridge && trashRecord.trashFileName) {
+    try {
+      let destPath = trashRecord.originalAbsolutePath
+        || (trashRecord.originalPath ? bridge.resolveExternalPath(trashRecord.originalPath) : null);
+      if (!destPath) {
+        showToast('Emplacement d\'origine inconnu, restauration impossible.', 'error');
+        return false;
+      }
+
+      // AJOUT : gestion du conflit si un fichier du même nom existe déjà à
+      // l'emplacement d'origine (ne jamais écraser silencieusement).
+      const availableDestPath = findAvailableRestorePath(bridge, destPath);
+      if (availableDestPath !== destPath) {
+        wasRenamed = true;
+        const newFileName = availableDestPath.slice(availableDestPath.lastIndexOf('/') + 1);
+        finalName = newFileName;
+        // Reconstruit le chemin relatif stocké côté bibliothèque en ne
+        // remplaçant que le nom de fichier final, pour garder les mêmes
+        // sous-dossiers que l'original.
+        if (trashRecord.originalPath) {
+          const slashIdx = trashRecord.originalPath.lastIndexOf('/');
+          finalPath = slashIdx !== -1
+            ? trashRecord.originalPath.slice(0, slashIdx + 1) + newFileName
+            : newFileName;
+        }
+        destPath = availableDestPath;
+      }
+
+      const ok = bridge.restoreFromTrash(trashRecord.trashFileName, destPath);
+      if (!ok) {
+        showToast('Impossible de restaurer le fichier à son emplacement d\'origine.', 'error');
+        return false;
+      }
+    } catch (err) {
+      console.warn('restoreFromTrashItem (natif) :', err);
+      showToast('Erreur lors de la restauration : ' + err.message, 'error');
+      return false;
+    }
+  }
+
+  const db = await openLibraryDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([LIBRARY_STORE_NAME, TRASH_STORE_NAME], 'readwrite');
+    tx.objectStore(TRASH_STORE_NAME).delete(id);
+    tx.objectStore(LIBRARY_STORE_NAME).put({
+      id: trashRecord.id,
+      name: finalName,
+      path: finalPath,
+      directory: trashRecord.originalDirectory,
+      type: trashRecord.type,
+      size: trashRecord.size,
+      // lastModified inconnu avec certitude après restauration : on force un
+      // rescan naturel du fichier au prochain scan en mettant 0, ce qui evite
+      // de rater une future mise à jour si le fichier a changé entre-temps.
+      lastModified: 0,
+      date: Date.now(),
+      favorite: trashRecord.favorite || false,
+      lastOpened: null,
+      blob: trashRecord.blob || null,
+      hash: null
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  if (wasRenamed) {
+    showToast('Un fichier portant le même nom existait déjà : restauré sous "' + finalName + '".', 'info');
+  }
+
+  return true;
+}
+
+// Suppression définitive et irréversible d'un fichier en corbeille. Peut être
+// déclenchée manuellement à tout moment par l'utilisateur (avant les 30 jours),
+// ou automatiquement par purgeExpiredTrash() une fois le délai dépassé.
+async function permanentlyDeleteTrashItem(id) {
+  const trashRecord = await getTrashRecord(id);
+  if (!trashRecord) return false;
+
+  const bridge = getFileOpsBridge();
+  if (bridge && trashRecord.trashFileName) {
+    try {
+      bridge.deleteForever(trashRecord.trashFileName);
+    } catch (err) {
+      console.warn('permanentlyDeleteTrashItem (natif) :', err);
+    }
+  }
+
+  const db = await openLibraryDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(TRASH_STORE_NAME, 'readwrite');
+    tx.objectStore(TRASH_STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return true;
+}
+
+// Purge automatique : supprime définitivement tout fichier en corbeille
+// depuis plus de TRASH_RETENTION_DAYS jours. Appelée au lancement de l'app
+// et à chaque scan (voir startAutoScan).
+async function purgeExpiredTrash() {
+  const items = await getAllTrashFiles();
+  const now = Date.now();
+  const limitMs = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const expired = items.filter(r => (now - r.deletedAt) > limitMs);
+  for (const r of expired) {
+    await permanentlyDeleteTrashItem(r.id);
+  }
+  if (expired.length) {
+    showToast(expired.length + ' fichier(s) supprimé(s) définitivement (corbeille > 30 jours).', 'info');
+  }
+  return expired.length;
 }
 
 function formatFileSize(bytes) {
@@ -3678,8 +3986,90 @@ function blobToBase64(blob) {
   });
 }
 
+// CORRECTION (partage gros fichiers / partage multiple) : prépare l'URI de
+// partage natif d'un enregistrement. Voie rapide (sans toucher à la mémoire
+// JS) quand le fichier a un chemin réel connu (venant du scan) : copie
+// disque-à-disque via FileOpsBridge, par flux de 64 Ko, jamais tout le
+// fichier en mémoire d'un coup. Avant cette correction, TOUT partage passait
+// par FileReader.readAsDataURL() sur le blob entier, ce qui pouvait créer
+// simultanément 2-3 copies du fichier en mémoire (blob + dataURL + base64) :
+// sur un appareil à 2 Go de RAM (ZTE Blade A35e), ça suffisait à planter
+// l'app dès qu'un fichier dépassait quelques Mo, et encore plus vite en
+// partage groupé où plusieurs fichiers étaient convertis en parallèle.
+async function prepareNativeShareUri(record, tag) {
+  const { Filesystem } = window.Capacitor.Plugins || {};
+  const bridge = getFileOpsBridge();
+  // Nom "sûr" dans le cache : préfixé pour éviter toute collision entre
+  // partages successifs ou simultanés (bulk share).
+  const safeName = 'Partage_' + tag + '_' + record.name;
+
+  if (bridge && record.path) {
+    try {
+      const sourcePath = bridge.resolveExternalPath(record.path);
+      if (bridge.fileExists(sourcePath)) {
+        const cacheDir = bridge.getCacheDirPath();
+        const destPath = cacheDir + '/' + safeName;
+        const ok = bridge.copyFile(sourcePath, destPath);
+        if (ok) {
+          // getUri() ne fait que résoudre l'URI content:// (FileProvider) déjà
+          // géré par Capacitor pour ce chemin : appel léger, pas de lecture
+          // de contenu, donc pas de coût mémoire supplémentaire ici.
+          const result = await Filesystem.getUri({ path: safeName, directory: Directory.Cache });
+          return result.uri;
+        }
+      }
+    } catch (err) {
+      console.warn('Copie native pour partage échouée, repli sur la voie base64 :', err);
+    }
+  }
+
+  // Repli : pas de chemin réel connu (fichier importé manuellement) ou copie
+  // native indisponible/échouée -> on passe par le blob en mémoire, comme
+  // avant. Reste risqué sur un très gros fichier, mais c'est un cas rare
+  // (la majorité des fichiers de la bibliothèque viennent du scan et ont un
+  // chemin réel, donc empruntent la voie rapide ci-dessus).
+  if (!record.blob) throw new Error('Fichier introuvable pour le partage.');
+  const base64Data = await blobToBase64(record.blob);
+  const writeResult = await Filesystem.writeFile({
+    path: safeName,
+    data: base64Data,
+    directory: Directory.Cache,
+  });
+  return writeResult.uri;
+}
+
+// AJOUT (anti-gonflement) : relit le contenu réel d'un fichier de la
+// bibliothèque à la demande (ouverture), au lieu de le garder dupliqué en
+// permanence dans IndexedDB. Pour un fichier venant du scan (path connu),
+// on relit directement depuis le disque via le plugin Filesystem — c'est le
+// même chemin de lecture que celui déjà utilisé pendant le scan, juste
+// déclenché à l'ouverture plutôt qu'à l'avance "au cas où".
+async function loadRecordContent(record) {
+  // Cas fichier importé manuellement (pas de chemin réel connu) : le blob
+  // est la seule copie du contenu qui existe, on la garde donc en base.
+  if (record.blob) return record.blob;
+
+  if (!record.path) {
+    throw new Error('Fichier introuvable (ni contenu stocké, ni chemin réel connu).');
+  }
+  if (!window.Capacitor?.isNativePlatform()) {
+    throw new Error('Ce fichier ne peut être relu que dans l\'app native.');
+  }
+  const { Filesystem } = window.Capacitor.Plugins || {};
+  if (!Filesystem) throw new Error('Plugin Filesystem manquant.');
+
+  const result = await Filesystem.readFile({
+    path: record.path,
+    directory: Directory[record.directory || 'ExternalStorage']
+  });
+  return base64ToFile(
+    result.data,
+    record.name,
+    record.type || mimeForExt(extOf(record.name))
+  );
+}
+
 async function shareFile(record) {
-  const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
   if (window.Capacitor?.isNativePlatform()) {
     const { Filesystem, Share } = window.Capacitor.Plugins || {};
     if (!Filesystem || !Share) {
@@ -3687,27 +4077,21 @@ async function shareFile(record) {
       return;
     }
     try {
-      const base64Data = await blobToBase64(record.blob);
-
-      // CORRECTION (réactivité) : on n'appelle plus Filesystem.getUri() après
-      // writeFile() — writeResult.uri est déjà l'URI native du fichier écrit,
-      // et ce 2e aller-retour avec le pont natif ne faisait que retarder
-      // l'apparition de la feuille de partage sans rien apporter de fiable.
-      const writeResult = await Filesystem.writeFile({
-        path: record.name,
-        data: base64Data,
-        directory: Directory.Cache,
-      });
-
+      const uri = await prepareNativeShareUri(record, Date.now());
       await Share.share({
         title: record.name,
-        url: writeResult.uri,
+        url: uri,
       });
     } catch (err) {
       showToast('Le partage natif a échoué : ' + err.message, 'error');
     }
     return;
   }
+  if (!record.blob) {
+    showToast('Fichier introuvable pour le partage.', 'error');
+    return;
+  }
+  const file = new File([record.blob], record.name, { type: record.type || 'application/octet-stream' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: record.name });
@@ -3965,7 +4349,10 @@ async function fullScan() {
       let record;
       if (existing) {
         await patchLibraryRecord(existing.id, {
-          blob: file,
+          // AJOUT (anti-gonflement) : on ne stocke plus le contenu binaire ici
+          // non plus (voir saveFileToLibrary) — le fichier a un chemin réel
+          // connu, donc rechargeable à la demande depuis le disque.
+          blob: null,
           name,
           size: file.size,
           type: file.type,
@@ -4009,6 +4396,10 @@ async function fullScan() {
 
 async function startAutoScan() {
     try {
+        // Purge la corbeille (fichiers > 30 jours) à chaque lancement/scan
+        // auto, indépendamment de si l'utilisateur ouvre l'écran Corbeille.
+        await purgeExpiredTrash();
+
         const lastFullScan = getLastFullScan();
 
         if (!lastFullScan) {
@@ -4100,7 +4491,9 @@ async function incrementalScan() {
 
             if (existing) {
                 await patchLibraryRecord(existing.id, {
-                    blob: file,
+                    // AJOUT (anti-gonflement) : idem fullScan, on ne conserve
+                    // plus le contenu binaire pour un fichier au chemin réel connu.
+                    blob: null,
                     name,
                     size: file.size,
                     type: file.type,
@@ -4343,16 +4736,18 @@ requestAnimationFrame(() => {
           showToast('Fichier renommé.', 'success');
         }
       } else if (chosen === 'delete') {
-        const ok = await showConfirm('Supprimer "' + record.name + '" de la bibliothèque ?', {
-          title: 'Supprimer le fichier',
+        const ok = await showConfirm('Placer "' + record.name + '" dans la corbeille ? Le fichier réel sera déplacé et supprimé définitivement après 30 jours (ou avant, depuis la corbeille).', {
+          title: 'Placer dans la corbeille',
           icon: '',
-          okLabel: 'Supprimer',
+          okLabel: 'Corbeille',
           cancelLabel: 'Annuler'
         });
         if (ok) {
-          await deleteFileFromLibrary(record.id);
-          onAfterChange && onAfterChange();
-          showToast('Fichier supprimé.', 'success');
+          const moved = await moveRecordToTrash(record);
+          if (moved) {
+            onAfterChange && onAfterChange();
+            showToast('Fichier placé dans la corbeille.', 'success');
+          }
         }
       }
     }
@@ -4405,24 +4800,39 @@ async function bulkShareSelected() {
   // quand la bibliothèque contient une centaine de fichiers.
   const selected = await getLibraryFilesByIds(Array.from(homeSelectedIds));
   if (selected.length === 0) return;
-  // NOTE: on ne fait plus de branche native "maison" ici : navigator.share est
-  // déjà réécrit plus bas dans le fichier pour le mode Capacitor natif et gère
-  // correctement le multi-fichiers (écriture + récupération de vraies URIs file://).
+
+  const isNative = window.Capacitor?.isNativePlatform();
+
+  if (isNative) {
+    // CORRECTION (partage multiple) : en natif, on ne construit plus les File
+    // à partir de r.blob (qui peut être volumineux, voire absent pour un
+    // fichier scanné dont le contenu n'est plus dupliqué en base). Seul le nom
+    // sert de repère ; le contenu réel est repris via records[].path par
+    // l'override navigator.share plus bas (copie disque-à-disque, séquentielle).
+    const files = selected.map(r => new File([], r.name, { type: r.type || 'application/octet-stream' }));
+    try {
+      await navigator.share({ files, title: files.length + ' fichiers', records: selected });
+      showToast(files.length + ' fichier(s) partagé(s)', 'success');
+    } catch (err) {
+      // L'override natif de navigator.share affiche déjà son propre toast
+      // d'erreur avant de relancer l'exception : pas besoin d'en remettre un ici.
+    }
+    return;
+  }
+
+  // Web (hors APK) : pas de chemin réel accessible, il faut le contenu binaire.
+  const missingBlob = selected.filter(r => !r.blob);
+  if (missingBlob.length) {
+    showToast('Certains fichiers ne sont pas disponibles hors de l\'app native.', 'error');
+    return;
+  }
   const files = selected.map(r => new File([r.blob], r.name, { type: r.type || 'application/octet-stream' }));
-
-  // En APK natif, navigator.share est réécrit plus bas dans le fichier et gère
-  // le multi-fichiers lui-même : on l'appelle directement sans passer par
-  // navigator.canShare, qui n'existe pas (ou répond mal) dans la WebView Android.
-  const canUseNativeShare = window.Capacitor?.isNativePlatform() || (navigator.canShare && navigator.canShare({ files }));
-
-  if (canUseNativeShare) {
+  if (navigator.canShare && navigator.canShare({ files })) {
     try {
       await navigator.share({ files, title: files.length + ' fichiers' });
       showToast(files.length + ' fichier(s) partagé(s)', 'success');
     } catch (err) {
-      // En natif, l'override de navigator.share affiche déjà son propre toast
-      // d'erreur avant de relancer l'exception : on évite d'en afficher un 2e ici.
-      if (!window.Capacitor?.isNativePlatform() && err.name !== 'AbortError') {
+      if (err.name !== 'AbortError') {
         showToast('Le partage a échoué : ' + err.message, 'error');
       }
     }
@@ -4434,18 +4844,28 @@ async function bulkShareSelected() {
 async function bulkDeleteSelected() {
   if (homeSelectedIds.size === 0) return;
   const ids = Array.from(homeSelectedIds);
-  const ok = await showConfirm('Supprimer ' + ids.length + ' fichier(s) de la bibliothèque ?', {
-    title: 'Supprimer les fichiers',
+  const ok = await showConfirm('Placer ' + ids.length + ' fichier(s) dans la corbeille ?', {
+    title: 'Placer dans la corbeille',
     icon: '',
-    okLabel: 'Supprimer',
+    okLabel: 'Corbeille',
     cancelLabel: 'Annuler'
   });
   if (!ok) return;
-  await Promise.all(ids.map(id => deleteFileFromLibrary(id)));
+  // AJOUT: récupère les enregistrements complets (chemin réel inclus), pas
+  // juste les ids, car moveRecordToTrash a besoin de record.path pour
+  // déplacer le vrai fichier sur le disque.
+  const records = await getLibraryFilesByIds(ids);
+  // Séquentiel plutôt que Promise.all : chaque déplacement réel de fichier
+  // passe par le pont natif, éviter de lancer toutes les opérations disque
+  // en parallèle sur un appareil à faible RAM (ZTE Blade A35e, 2 Go).
+  let moved = 0;
+  for (const record of records) {
+    if (await moveRecordToTrash(record)) moved++;
+  }
   homeSelectMode = false;
   homeSelectedIds.clear();
   renderHomeScreen();
-  showToast(ids.length + ' fichier(s) supprimé(s).', 'success');
+  showToast(moved + ' fichier(s) placé(s) dans la corbeille.', 'success');
 }
 
 // AJOUT: applique le mode de tri choisi (nom/date/taille/dernière lecture),
@@ -4500,10 +4920,15 @@ function renderHomeFileList() {
       filtered.forEach(record => {
         const item = buildLibraryItem(record, {
           selectable: homeSelectMode,
-          onOpen: (r) => {
+          onOpen: async (r) => {
             markFileOpened(r.id).catch(() => {});
-            const file = new File([r.blob], r.name, { type: r.type });
-            loadFileIntoViewer(file);
+            try {
+              const file = await loadRecordContent(r);
+              loadFileIntoViewer(file);
+            } catch (err) {
+              console.warn('Ouverture fichier échouée :', err);
+              showToast('Impossible d\'ouvrir "' + r.name + '" : ' + err.message, 'error');
+            }
           },
           onAfterChange: renderHomeFileList,
           onLongPress: (r) => {
@@ -4698,7 +5123,7 @@ bulkDeleteBtn.innerHTML = `
 <svg viewBox="0 0 24 24">
 <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"/>
 </svg>
-<span>Supprimer</span>
+<span>Corbeille</span>
 `;
 
 bulkBar.appendChild(bulkShareBtn);
@@ -5088,7 +5513,12 @@ async function setupAndroidBackButton() {
       return;
     }
 
-    // 4) Mini-jeu ouvert -> retour à l'accueil (réutilise le bouton "Accueil"
+    // 4) Corbeille ouverte -> retour à l'accueil
+    if (window.__closeTrashScreenIfOpen && window.__closeTrashScreenIfOpen()) {
+      return;
+    }
+
+    // 5) Mini-jeu ouvert -> retour à l'accueil (réutilise le bouton "Accueil"
     // du jeu, qui gère aussi l'arrêt propre de la boucle de jeu).
     const gameScreen = document.getElementById('game-screen');
     if (gameScreen?.classList.contains('active')) {
@@ -5449,19 +5879,110 @@ document.addEventListener('visibilitychange', () => {
 
   function closeGame() {
     stopLoop();
-    // CORRECTION (fuite/robustesse) : si on quitte l'écran du jeu pendant le
-    // compte à rebours de reprise (3-2-1), l'intervalle continuait de tourner
-    // en arrière-plan et relançait la boucle du jeu (invisible) une fois fini.
-    if (resumeCountdownId) {
-      clearInterval(resumeCountdownId);
-      resumeCountdownId = null;
-    }
-    gameState = 'idle';
     gameScreen.classList.remove('active');
   }
 
   openGameBtn.addEventListener('click', openGame);
   gameBackBtn.addEventListener('click', closeGame);
+})();
+</script>
+
+<!-- AJOUT: écran dédié Corbeille (même structure que le mini-jeu) -->
+<script>
+(function () {
+  const trashScreen = document.getElementById('trash-screen');
+  const openTrashBtn = document.getElementById('open-trash-btn');
+  const trashBackBtn = document.getElementById('trash-back-btn');
+  const trashEmptyBtn = document.getElementById('trash-empty-btn');
+  const trashListEl = document.getElementById('trash-list');
+
+  function daysRemaining(deletedAt) {
+    const elapsedMs = Date.now() - deletedAt;
+    const remainingMs = (TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000) - elapsedMs;
+    return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+  }
+
+  function buildTrashItem(record) {
+    const item = document.createElement('div');
+    item.className = 'library-item';
+    const remaining = daysRemaining(record.deletedAt);
+    item.innerHTML =
+      '<div class="library-item-icon">' + fileIconFor(record.name) + '</div>' +
+      '<div class="library-item-info">' +
+        '<div class="library-item-name"></div>' +
+        '<div class="library-item-meta">' + formatFileSize(record.size || 0) +
+          ' · <span class="trash-item-days">' + remaining + ' j. restant(s)</span></div>' +
+      '</div>' +
+      '<div class="trash-item-actions">' +
+        '<button class="trash-action-btn" data-action="restore">Restaurer</button>' +
+        '<button class="trash-action-btn danger" data-action="delete-forever">Suppr. déf.</button>' +
+      '</div>';
+    item.querySelector('.library-item-name').textContent = record.name;
+
+    item.querySelector('[data-action="restore"]').addEventListener('click', async () => {
+      const ok = await restoreFromTrashItem(record.id);
+      if (ok) renderTrashList();
+    });
+    item.querySelector('[data-action="delete-forever"]').addEventListener('click', async () => {
+      const confirmed = await showConfirm(
+        'Supprimer définitivement "' + record.name + '" ? Cette action est irréversible.',
+        { title: 'Suppression définitive', icon: '', okLabel: 'Supprimer', cancelLabel: 'Annuler' }
+      );
+      if (confirmed) {
+        await permanentlyDeleteTrashItem(record.id);
+        renderTrashList();
+      }
+    });
+    return item;
+  }
+
+  function renderTrashList() {
+    getAllTrashFiles().then(records => {
+      trashListEl.innerHTML = '';
+      if (records.length === 0) {
+        trashListEl.innerHTML = '<p class="library-empty">La corbeille est vide.</p>';
+        return;
+      }
+      records.forEach(record => trashListEl.appendChild(buildTrashItem(record)));
+    });
+  }
+
+  async function openTrash() {
+    overflowMenu.classList.remove('active');
+    await purgeExpiredTrash();
+    renderTrashList();
+    trashScreen.classList.add('active');
+  }
+
+  function closeTrash() {
+    trashScreen.classList.remove('active');
+  }
+
+  openTrashBtn.addEventListener('click', openTrash);
+  trashBackBtn.addEventListener('click', closeTrash);
+  trashEmptyBtn.addEventListener('click', async () => {
+    const records = await getAllTrashFiles();
+    if (records.length === 0) return;
+    const confirmed = await showConfirm(
+      'Vider la corbeille ? ' + records.length + ' fichier(s) seront supprimé(s) définitivement.',
+      { title: 'Vider la corbeille', icon: '', okLabel: 'Vider', cancelLabel: 'Annuler' }
+    );
+    if (!confirmed) return;
+    for (const r of records) {
+      await permanentlyDeleteTrashItem(r.id);
+    }
+    renderTrashList();
+  });
+
+  // Expose pour permettre au bouton retour Android (voir setupAndroidBackButton)
+  // de fermer l'écran Corbeille en priorité, comme il le fait déjà pour le jeu.
+  window.__closeTrashScreenIfOpen = function () {
+    if (trashScreen.classList.contains('active')) {
+      closeTrash();
+      return true;
+    }
+    return false;
+  };
 })();
 </script>
 
@@ -5506,31 +6027,37 @@ document.addEventListener('visibilitychange', () => {
         }
 
         // Cas 2 : Partage multiple (ton système Sharesheet de documents/sous-dossiers)
-        // CORRECTION (réactivité) : conversion + écriture de TOUS les fichiers en
-        // parallèle (Promise.all) au lieu d'un for..of séquentiel qui attendait
-        // fichier par fichier. Avec plusieurs fichiers sélectionnés, c'était la
-        // principale cause de lenteur avant l'ouverture de la feuille de partage
-        // (le temps total était la SOMME de chaque fichier, alors qu'il ne devrait
-        // être que le temps du plus lent).
+        // CORRECTION (gros fichiers / partage multiple) : on ne convertit plus
+        // tout en base64 en parallèle (Promise.all) — sur un appareil à 2 Go de
+        // RAM, plusieurs conversions base64 simultanées (chacune pouvant créer
+        // 2-3 copies du fichier en mémoire) suffisaient à faire planter l'app,
+        // surtout avec un fichier volumineux dans le lot. On traite maintenant
+        // chaque fichier l'un après l'autre, et pour ceux qui ont un chemin réel
+        // connu (records[], transmis par bulkShareSelected), on passe par une
+        // copie disque-à-disque native (prepareNativeShareUri) qui ne charge
+        // jamais le contenu en mémoire JS — la voie base64 ne sert plus que de
+        // repli pour les fichiers sans chemin réel.
         const horodatage = Date.now();
-        const urisFichiersNatifs = await Promise.all(
-          donneesPartage.files.map(async (fichierWeb) => {
-            // 1. Convertir le fichier web (Blob/File) en Base64 pour l'écrire physiquement
-            const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
-
-            // 2. Écrire temporairement le fichier dans le cache de l'app (privé, ne
-            // nécessite AUCUNE permission de stockage, contrairement à Directory.Documents
-            // qui échouait silencieusement tant que la permission stockage n'était pas
-            // accordée - c'est ce qui causait "Erreur lors du partage natif").
-            const fichierEcrit = await Filesystem.writeFile({
-              path: `PartageTmp_${horodatage}_${fichierWeb.name}`,
-              data: donneesBase64,
-              directory: Directory.Cache
-            });
-
-            return fichierEcrit.uri;
-          })
-        );
+        const records = donneesPartage.records || [];
+        const urisFichiersNatifs = [];
+        for (let i = 0; i < donneesPartage.files.length; i++) {
+          const fichierWeb = donneesPartage.files[i];
+          const record = records[i];
+          if (record) {
+            const uri = await prepareNativeShareUri(record, horodatage + '_' + i);
+            urisFichiersNatifs.push(uri);
+            continue;
+          }
+          // Repli : pas de record (appel direct à navigator.share hors
+          // bulkShareSelected/shareFile) -> ancienne voie base64.
+          const donneesBase64 = await convertirFichierEnBase64(fichierWeb);
+          const fichierEcrit = await Filesystem.writeFile({
+            path: `PartageTmp_${horodatage}_${i}_${fichierWeb.name}`,
+            data: donneesBase64,
+            directory: Directory.Cache
+          });
+          urisFichiersNatifs.push(fichierEcrit.uri);
+        }
 
         // 3. Ouvrir la Sharesheet Android officielle avec tous les fichiers préservés
         await Share.share({
