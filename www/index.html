@@ -2311,7 +2311,7 @@ async function getLibraryIndex() {
 
     for (const file of files) {
         if (file.path) {
-            index.set(file.path, {
+            index.set(`${file.directory || "Documents"}/${file.path}`, {
                 id: file.id,
                 lastModified: file.lastModified || 0
             });
@@ -3566,11 +3566,10 @@ async function saveFileToLibrary(file, path = null, lastModified = null, directo
           `${r.directory || "Documents"}/${r.path}` === key
         );
       }
-      // 2) Sinon : même hash = même fichier
-      if (!existingRecord) {
-        existingRecord = files.find(
-          r => r.hash && r.hash === hash
-        );
+      // Les fichiers natifs à des chemins distincts restent distincts.
+      // Le hash ne déduplique que les imports sans chemin physique.
+      if (!existingRecord && !key) {
+        existingRecord = files.find(r => !r.path && r.hash && r.hash === hash);
       }
       // 3) Compatibilité anciens fichiers sans hash
       if (!existingRecord && !key) {
@@ -3972,24 +3971,31 @@ async function permanentlyDeleteTrashItemsBatch(ids) {
 
   const bridge = getFileOpsBridge();
   const withRealFile = trashRecords.filter(r => r.trashFileName);
-  if (bridge && withRealFile.length > 0) {
-    try {
-      const names = withRealFile.map(r => r.trashFileName);
-      bridge.deleteForeverBatch(JSON.stringify(names));
-    } catch (err) {
-      console.warn('permanentlyDeleteTrashItemsBatch (natif) :', err);
+  const failedNativeIds = new Set();
+  if (withRealFile.length) {
+    if (!bridge || typeof bridge.deleteForeverBatch !== 'function') {
+      withRealFile.forEach(r => failedNativeIds.add(r.id));
+    } else {
+      try {
+        const raw = bridge.deleteForeverBatch(JSON.stringify(withRealFile.map(r => r.trashFileName)));
+        const results = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(results) || results.length !== withRealFile.length) throw new Error('Réponse native invalide.');
+        results.forEach((ok, i) => { if (ok !== true) failedNativeIds.add(withRealFile[i].id); });
+      } catch (err) {
+        console.warn('Suppression définitive non confirmée :', err);
+        withRealFile.forEach(r => failedNativeIds.add(r.id));
+      }
     }
   }
-
+  const deletable = trashRecords.filter(r => !failedNativeIds.has(r.id));
   await new Promise((resolve, reject) => {
     const tx = db.transaction(TRASH_STORE_NAME, 'readwrite');
     const store = tx.objectStore(TRASH_STORE_NAME);
-    trashRecords.forEach(r => store.delete(r.id));
+    deletable.forEach(r => store.delete(r.id));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-
-  return trashRecords.length;
+  return deletable.length;
 }
 
 // Purge automatique : supprime définitivement tout fichier en corbeille
@@ -4266,16 +4272,17 @@ function yieldToMainThread() {
 
 // Parcourt recursivement un dossier natif via le plugin Filesystem et
 // retourne la liste des chemins de fichiers dont l'extension correspond.
+let nativeScanHadErrors = false;
 async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, path = '', depth = 0) {
     let matches = [];
 
     // Coupe-circuit profondeur : protege contre les arborescences
     // anormalement profondes ou les liens symboliques circulaires.
-    if (depth > SCAN_MAX_DEPTH) return matches;
+    if (depth > SCAN_MAX_DEPTH) { nativeScanHadErrors = true; return matches; }
 
     // Coupe-circuit nombre total de dossiers visites : protege contre les
     // stockages avec des dizaines de milliers de sous-dossiers.
-    if (scanDirCounter >= SCAN_MAX_DIRS) return matches;
+    if (scanDirCounter >= SCAN_MAX_DIRS) { nativeScanHadErrors = true; return matches; }
     scanDirCounter++;
 
     // Cede la main periodiquement pour laisser Android respirer et eviter
@@ -4297,6 +4304,12 @@ async function listNativeFilesRecursive(Filesystem, Directory, baseDirectory, pa
             directory: resolvedDirectory
         });
     } catch (err) {
+        nativeScanHadErrors = true;
+        console.warn('Scan impossible pour le dossier :', baseDirectory, path, err);
+        return matches;
+    }
+    if (!entries || !Array.isArray(entries.files)) {
+        nativeScanHadErrors = true;
         return matches;
     }
     for (const entry of entries.files) {
@@ -4386,6 +4399,7 @@ async function fullScan() {
   }
 
   let paths = [];
+  nativeScanHadErrors = false;
   resetScanDirCounter();
 
   for (const dir of SCAN_DIRECTORIES) {
@@ -4399,7 +4413,8 @@ async function fullScan() {
     );
   }
 
-  await cleanupDeletedNativeFiles(paths);
+  if (!nativeScanHadErrors) await cleanupDeletedNativeFiles(paths);
+  else console.warn('Scan complet partiel : nettoyage des fichiers absents annulé.');
 
   if (!paths.length) return [];
 
@@ -4425,7 +4440,7 @@ async function fullScan() {
       });
 
       const lastModified = stat.mtime || stat.modified || 0;
-      const existing = index.get(path);
+      const existing = index.get(`${directory}/${path}`);
 
       // Optimisation vitesse : fichier deja connu et inchange (meme
       // lastModified) => on saute la lecture + le hash, couteux sur de
@@ -4535,6 +4550,7 @@ async function incrementalScan() {
     const index = await getLibraryIndex();
 
     let paths = [];
+    nativeScanHadErrors = false;
     for (const dir of SCAN_DIRECTORIES) {
         paths.push(
             ...(await listNativeFilesRecursive(
@@ -4568,7 +4584,7 @@ async function incrementalScan() {
             });
 
             const lastModified = stat.mtime || stat.modified || 0;
-            const existing = index.get(path);
+            const existing = index.get(`${directory}/${path}`);
 
             if (existing?.lastModified === lastModified) continue;
 
@@ -4624,7 +4640,8 @@ async function incrementalScan() {
         }
     }
 
-    await cleanupDeletedNativeFiles(paths);
+    if (!nativeScanHadErrors) await cleanupDeletedNativeFiles(paths);
+    else console.warn('Scan incrémental partiel : nettoyage des fichiers absents annulé.');
 
     if (added) {
         renderHomeFileList();
